@@ -1,0 +1,42 @@
+# Local dev + CI integration stack: backend + in-cluster-equivalent Postgres.
+# (FE runs via `npm run dev` against this; the unified FE+BE+DB compose for FE
+# integration tests lands in the frontend repo at S17.)
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: modelmatch
+      POSTGRES_PASSWORD: modelmatch
+      POSTGRES_DB: modelmatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modelmatch -d modelmatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://modelmatch:modelmatch@db:5432/modelmatch
+      CORS_ALLOW_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
