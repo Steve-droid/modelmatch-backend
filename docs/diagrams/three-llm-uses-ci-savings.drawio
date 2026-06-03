@@ -1,0 +1,101 @@
+<mxGraphModel dx="1600" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1760" pageHeight="1020" math="0" shadow="0">
+  <root>
+    <mxCell id="flow_root" />
+    <mxCell id="flow_layer" parent="flow_root" />
+
+    <mxCell id="flow_title" value="ModelMatch — Three LLM Uses (two-surface rule) and the CI Savings Loop" style="text;html=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="flow_layer">
+      <mxGeometry x="40" y="14" width="1680" height="34" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_legend" value="GREEN = in-cluster backend LLM (Bedrock Nova Lite / 2-Lite via IRSA — no static keys)    ·    ORANGE = CI agent, BYOK (user's key, any provider)    ·    PURPLE = deterministic, NO LLM" style="text;html=1;fontSize=11;fontStyle=2;align=center;verticalAlign=middle;whiteSpace=wrap;" vertex="1" parent="flow_layer">
+      <mxGeometry x="40" y="52" width="1680" height="26" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_backend" value="In-cluster backend (EKS) — FastAPI + PostgreSQL" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f0f7ee;strokeColor=#82b366;collapsible=0;verticalAlign=top;fontStyle=1;" vertex="1" parent="flow_layer">
+      <mxGeometry x="40" y="100" width="1000" height="680" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_ingest" value="① Catalog ingestion (#3)&#10;sources → Nova extract →&#10;validate (untrusted) →&#10;idempotent (content-hash) → upsert" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="flow_backend">
+      <mxGeometry x="40" y="60" width="290" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_catalog" value="benchmark catalog" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="flow_backend">
+      <mxGeometry x="400" y="65" width="150" height="90" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_recommender" value="Deterministic recommender (NO LLM)&#10;form → filter → weighted rank_score&#10;→ pick model + baseline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="flow_backend">
+      <mxGeometry x="620" y="60" width="330" height="100" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_savings" value="Savings engine + quality gate&#10;actual = tokens×selected.price&#10;baseline = tokens×baseline.price (Sonnet, computed)&#10;savings = baseline − actual&#10;quality_ok = acceptance ≥ threshold (failing runs excluded + surfaced)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="flow_backend">
+      <mxGeometry x="40" y="330" width="540" height="140" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_chat" value="④ Grounded Q&amp;A chat (#4)&#10;retrieve (savings + catalog rows) →&#10;strictly-grounded prompt → Nova →&#10;answer + retrieval_trace&#10;out-of-scope → honest refusal; SQL parameterized&#10;opening msg = auto &quot;explain my spend&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="flow_backend">
+      <mxGeometry x="630" y="330" width="320" height="140" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_dashboard" value="Savings dashboard&#10;cost/run · cumulative saved vs baseline ·&#10;quality (acceptance rate) · runs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="flow_backend">
+      <mxGeometry x="40" y="540" width="540" height="90" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_irsa" value="IRSA → Bedrock Nova + S3 (no static keys)" style="text;html=1;fontSize=10;fontStyle=2;align=center;verticalAlign=middle;fillColor=#eafaf0;strokeColor=#82b366;rounded=1;whiteSpace=wrap;" vertex="1" parent="flow_backend">
+      <mxGeometry x="630" y="540" width="320" height="40" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_jenkins" value="User's Jenkins (their CI — BYOK)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#fdf3e7;strokeColor=#d79b00;collapsible=0;verticalAlign=top;fontStyle=1;" vertex="1" parent="flow_layer">
+      <mxGeometry x="1120" y="100" width="600" height="440" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_pr" value="PR diff" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="flow_jenkins">
+      <mxGeometry x="40" y="70" width="120" height="60" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_agent" value="③ ModelMatch CI agent (Docker)&#10;the PROOF — recommended model reviews the diff&#10;security + style findings + token usage&#10;BYOK via provider-agnostic LLMClient&#10;(Bedrock · Anthropic · Gemini; fake client in tests)&#10;review + PASS/FAIL gate stay IN CI · never edits repo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="flow_jenkins">
+      <mxGeometry x="200" y="60" width="380" height="170" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_gate" value="PASS / FAIL gate&#10;(blocks bad code before prod)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="flow_jenkins">
+      <mxGeometry x="245" y="290" width="290" height="110" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_e_pr_agent" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" source="flow_pr" target="flow_agent" parent="flow_jenkins">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_e_agent_gate" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" source="flow_agent" target="flow_gate" parent="flow_jenkins">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_demo" value="Demo spectrum: agent on Steve's own Anthropic key — Haiku LIVE, Sonnet baseline COMPUTED (tokens × price, not run); Gemini free-tier as a 3rd vendor (non-confidential code only). Catalog lists GPT/DeepSWE (data-only). OpenAI out." style="text;html=1;fontSize=10;fontStyle=2;align=left;verticalAlign=middle;fillColor=#fdf3e7;strokeColor=#d79b00;rounded=1;spacingLeft=10;spacingRight=10;whiteSpace=wrap;" vertex="1" parent="flow_layer">
+      <mxGeometry x="1120" y="570" width="600" height="100" as="geometry" />
+    </mxCell>
+
+    <mxCell id="flow_e_ingest_catalog" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" source="flow_ingest" target="flow_catalog" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_e_catalog_recommender" value="ranks" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontStyle=2;" edge="1" source="flow_catalog" target="flow_recommender" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="585" y="170" as="targetPoint" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="flow_e_recommender_agent" value="picks the model that runs in CI" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontStyle=2;" edge="1" source="flow_recommender" target="flow_agent" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="1070" y="200" as="sourcePoint" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="flow_e_agent_savings" value="POST /ci-runs&#10;findings + tokens&#10;(per-project token)" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontSize=10;" edge="1" source="flow_agent" target="flow_savings" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="1090" y="500" as="sourcePoint" />
+        <mxPoint x="600" y="500" as="targetPoint" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="flow_e_savings_dashboard" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;" edge="1" source="flow_savings" target="flow_dashboard" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_e_savings_chat" value="grounds" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontStyle=2;" edge="1" source="flow_savings" target="flow_chat" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry" />
+    </mxCell>
+    <mxCell id="flow_e_catalog_chat" value="grounds" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;fontStyle=2;dashed=1;" edge="1" source="flow_catalog" target="flow_chat" parent="flow_layer">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="980" y="220" as="sourcePoint" />
+      </mxGeometry>
+    </mxCell>
+
+    <mxCell id="flow_banner" value="The recommender is DETERMINISTIC — the LLM never ranks. It does grounded work in THREE places: ① ingestion fills the catalog, ③ the CI agent is the proof (review + gate in CI), ④ the chat explains the spend. ①+④ run in-cluster on Bedrock Nova via IRSA; ③ is BYOK in the user's Jenkins." style="text;html=1;fontSize=12;fontStyle=2;align=center;verticalAlign=middle;fillColor=#f5f5f5;strokeColor=#999999;rounded=1;whiteSpace=wrap;" vertex="1" parent="flow_layer">
+      <mxGeometry x="40" y="810" width="1680" height="70" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>

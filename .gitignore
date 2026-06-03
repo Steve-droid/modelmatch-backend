@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.uv/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Alembic local
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
