@@ -13,3 +13,13 @@ class UserCreate(CamelModel):
 class UserOut(CamelModel):
     id: int
     email: EmailStr
+
+
+class LoginRequest(CamelModel):
+    email: EmailStr
+    password: str
+
+
+class TokenOut(CamelModel):
+    access_token: str
+    token_type: str = "bearer"

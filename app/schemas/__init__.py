@@ -5,7 +5,7 @@ Richer shapes (recommendation request/response, savings aggregates, chat) arrive
 with their own slices.
 """
 
-from app.schemas.auth import UserCreate, UserOut
+from app.schemas.auth import LoginRequest, TokenOut, UserCreate, UserOut
 from app.schemas.base import CamelModel
 from app.schemas.catalog import (
     BenchmarkOut,
@@ -20,6 +20,8 @@ __all__ = [
     "CamelModel",
     "UserCreate",
     "UserOut",
+    "LoginRequest",
+    "TokenOut",
     "ModelCreate",
     "ModelOut",
     "HarnessOut",
