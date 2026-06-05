@@ -11,6 +11,8 @@ from app.schemas.catalog import (
     BenchmarkOut,
     BenchmarkResultCreate,
     BenchmarkResultOut,
+    CatalogRowIn,
+    CatalogRowOut,
     HarnessOut,
     ModelCreate,
     ModelOut,
@@ -28,4 +30,6 @@ __all__ = [
     "BenchmarkOut",
     "BenchmarkResultCreate",
     "BenchmarkResultOut",
+    "CatalogRowIn",
+    "CatalogRowOut",
 ]

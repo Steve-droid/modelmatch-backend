@@ -71,6 +71,17 @@ class Model(Base):
 
 class Harness(Base):
     __tablename__ = "harness"
+    __table_args__ = (
+        # Natural key (name, vendor), matching model's style — two vendors may ship
+        # a harness of the same name. NULLS NOT DISTINCT so a vendor-less harness
+        # ("SWE-agent" with no vendor) still dedupes on re-ingest.
+        UniqueConstraint(
+            "name",
+            "vendor",
+            name="uq_harness_name_vendor",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -79,6 +90,7 @@ class Harness(Base):
 
 class Benchmark(Base):
     __tablename__ = "benchmark"
+    __table_args__ = (UniqueConstraint("name", name="uq_benchmark_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -99,6 +111,20 @@ class SourceDocument(Base):
 
 class BenchmarkResult(Base):
     __tablename__ = "benchmark_result"
+    __table_args__ = (
+        # Idempotency key for ingestion/seed: one row per (model, benchmark,
+        # harness, metric). NULLS NOT DISTINCT (PG15+) so a NULL harness still
+        # dedupes — otherwise two harness-less rows for the same model/benchmark/
+        # metric would both be allowed.
+        UniqueConstraint(
+            "model_id",
+            "benchmark_id",
+            "harness_id",
+            "metric",
+            name="uq_benchmark_result_identity",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     model_id: Mapped[int] = mapped_column(ForeignKey("model.id"))
