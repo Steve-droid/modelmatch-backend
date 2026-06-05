@@ -57,3 +57,28 @@ class BenchmarkResultCreate(CamelModel):
 
 class BenchmarkResultOut(BenchmarkResultCreate):
     id: int
+
+
+class CatalogRowIn(CamelModel):
+    """A denormalized catalog row (what /benchmarks and the seed accept).
+
+    The service resolves the name fields to model/benchmark/harness rows
+    (get-or-create) and upserts the benchmark_result. Mirrors the seed format.
+    """
+
+    model: str
+    vendor: str
+    benchmark: str
+    metric: str
+    score: Decimal
+    cost_per_mtok: Decimal
+    harness: Optional[str] = None
+    harness_vendor: Optional[str] = None
+    task_type: Optional[str] = None
+    context_window: Optional[int] = None
+    source: Optional[str] = None
+    measured_at: Optional[date] = None
+
+
+class CatalogRowOut(CatalogRowIn):
+    id: int  # benchmark_result id

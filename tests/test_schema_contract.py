@@ -28,6 +28,14 @@ CONTRACT = {
         "id", "modelId", "benchmarkId", "harnessId", "taskType", "score", "metric",
         "costPerMtok", "contextWindow", "source", "sourceDocumentId", "measuredAt",
     },
+    "CatalogRowIn": {
+        "model", "vendor", "benchmark", "metric", "score", "costPerMtok", "harness",
+        "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
+    },
+    "CatalogRowOut": {
+        "id", "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
+        "harness", "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
+    },
 }
 
 
