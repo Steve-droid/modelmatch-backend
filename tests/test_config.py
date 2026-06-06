@@ -33,3 +33,31 @@ def test_ttl_accepts_either_env_spelling(monkeypatch, env_name):
     monkeypatch.delenv("JWT_EXPIRE_MINUTES", raising=False)
     monkeypatch.setenv(env_name, "15")
     assert Settings(_env_file=None).jwt_expires_minutes == 15
+
+
+def _ok_secret(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "a-real-strong-secret-value")
+
+
+def test_shortlist_size_must_be_at_least_one(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("RECOMMENDATION_SHORTLIST_SIZE", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("bad", ["-0.1", "1.5"])
+def test_rank_weights_must_be_between_zero_and_one(monkeypatch, bad):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("RANK_WEIGHT_LOW", bad)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_valid_recommender_knobs_accepted(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("RANK_WEIGHT_MEDIUM", "0.5")
+    monkeypatch.setenv("RECOMMENDATION_SHORTLIST_SIZE", "5")
+    s = Settings(_env_file=None)
+    assert s.rank_weight_medium == 0.5
+    assert s.recommendation_shortlist_size == 5

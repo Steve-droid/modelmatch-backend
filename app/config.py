@@ -39,6 +39,20 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("JWT_EXPIRES_MINUTES", "JWT_EXPIRE_MINUTES"),
     )
 
+    # Deterministic recommender (S6). The quality↔cost slider's w_q is preset by
+    # budget_sensitivity; w_c = 1 − w_q. low → quality-leaning, high → cost-leaning.
+    # All env-tunable, no hardcoding in the formula.
+    # w_q must be a valid weight (0..1) so w_c = 1 − w_q is also valid.
+    rank_weight_low: float = Field(default=0.85, ge=0.0, le=1.0)
+    rank_weight_medium: float = Field(default=0.60, ge=0.0, le=1.0)
+    rank_weight_high: float = Field(default=0.40, ge=0.0, le=1.0)
+    # The "expensive default" savings are measured against. A model NAME (matched
+    # within the ranked comparability group), not a DB id — ids differ per fresh
+    # DB. Falls back to the highest-cost model in the group if absent. Demo = Sonnet.
+    baseline_model_id: str = "Claude Sonnet 4.x"
+    # ≥ 1 so suggested = shortlist[0] can never index an empty list.
+    recommendation_shortlist_size: int = Field(default=3, ge=1)
+
     @field_validator("jwt_secret")
     @classmethod
     def _reject_placeholder_secret(cls, v: str) -> str:

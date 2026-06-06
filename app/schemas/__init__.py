@@ -17,6 +17,15 @@ from app.schemas.catalog import (
     ModelCreate,
     ModelOut,
 )
+from app.schemas.recommend import (
+    BaselineOut,
+    ComparabilityGroup,
+    PrefillRequest,
+    PrefillResult,
+    RecommendationOptionOut,
+    RecommendationRequest,
+    RecommendationResult,
+)
 
 __all__ = [
     "CamelModel",
@@ -32,4 +41,11 @@ __all__ = [
     "BenchmarkResultOut",
     "CatalogRowIn",
     "CatalogRowOut",
+    "RecommendationRequest",
+    "RecommendationResult",
+    "RecommendationOptionOut",
+    "BaselineOut",
+    "ComparabilityGroup",
+    "PrefillRequest",
+    "PrefillResult",
 ]
