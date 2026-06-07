@@ -51,8 +51,16 @@ def get_or_create_harness(
     return obj
 
 
-def upsert_catalog_row(db: Session, row: CatalogRowIn) -> CatalogRowOut:
-    """Idempotent insert-or-update of one catalog row; returns the stored row."""
+def upsert_catalog_row(
+    db: Session, row: CatalogRowIn, *, source_document_id: int | None = None
+) -> CatalogRowOut:
+    """Idempotent insert-or-update of one catalog row; returns the stored row.
+
+    `source_document_id` (S5b ingestion) links the row to the source it came from.
+    It's NOT part of the row's identity, so two sources stating the same figure still
+    dedupe to one row — the latest ingest's provenance wins. A provenance-less upsert
+    (seed / `POST /benchmarks`, id=None) never clears an existing link.
+    """
     model = get_or_create_model(db, row.model, row.vendor)
     benchmark = get_or_create_benchmark(db, row.benchmark, row.task_type)
     harness = get_or_create_harness(db, row.harness, row.harness_vendor)
@@ -70,12 +78,18 @@ def upsert_catalog_row(db: Session, row: CatalogRowIn) -> CatalogRowOut:
         benchmark_id=benchmark.id,
         harness_id=harness.id if harness else None,
         metric=row.metric,
+        source_document_id=source_document_id,
         **mutable,
     )
     # ON CONFLICT on the natural-key constraint → refresh the mutable figures only.
+    # Provenance is refreshed too, but ONLY when this upsert carries one (else a
+    # seed/API re-upsert would null out an earlier ingestion's source link).
+    set_cols = {k: stmt.excluded[k] for k in mutable}
+    if source_document_id is not None:
+        set_cols["source_document_id"] = stmt.excluded["source_document_id"]
     stmt = stmt.on_conflict_do_update(
         constraint="uq_benchmark_result_identity",
-        set_={k: stmt.excluded[k] for k in mutable},
+        set_=set_cols,
     ).returning(BenchmarkResult.id)
     result_id = db.execute(stmt).scalar_one()
     db.commit()
