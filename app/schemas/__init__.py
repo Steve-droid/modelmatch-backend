@@ -17,6 +17,7 @@ from app.schemas.catalog import (
     ModelCreate,
     ModelOut,
 )
+from app.schemas.project import ProjectCreate, ProjectOut
 from app.schemas.recommend import (
     BaselineOut,
     ComparabilityGroup,
@@ -48,4 +49,6 @@ __all__ = [
     "ComparabilityGroup",
     "PrefillRequest",
     "PrefillResult",
+    "ProjectCreate",
+    "ProjectOut",
 ]
