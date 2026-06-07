@@ -45,6 +45,32 @@ tests/        (pytest + testcontainers; fake LLM + fixtures; gated test-llm-live
 - Config via `pydantic-settings` from env. Pydantic schemas, camelCase out. Errors 401/403/422/429/504.
 - `uv` packaging. Branching: `feature/<story-id>-<desc>`; never commit to `main`.
 
+Before asking Steve to approve a Story commit, Claude Code must run:
+
+/pre-commit-scan /Users/steve/bootcamp/portfolio/modelmatch-backend
+
+This command is a required pre-commit review gate, but it does not replace Steve’s approval.
+If it returns FAIL, fix the findings and rerun it.
+If it returns PASS, stop and wait for Steve’s explicit approval before committing, merging to main, tagging, or pushing.
+
+The flow should be:
+
+```
+Implement story
+   |
+Run tests
+   |
+Run /pre-commit-scan
+   |
+PASS? no -> fix and rerun
+   |
+PASS? yes -> show Steve summary
+   |
+Steve explicitly approves
+   |
+commit / merge / tag / push
+```
+
 ## Build order touching this repo
 
 S1 · S2 · S3 · S4 · S5 catalog · **S5b ingestion (#3)** · S6 pick · S7 pre-fill · S8 project · S9

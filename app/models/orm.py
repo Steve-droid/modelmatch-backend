@@ -218,6 +218,12 @@ class JenkinsConnection(Base):
         String(255),
         comment="secret-store reference to the BYOK model key — NEVER plaintext",
     )
+    # SHA-256 hex of the per-project CI ingest token — NEVER the plaintext token.
+    # Minted once at GET /ci-setup; rotation is a later explicit endpoint.
+    ci_token_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        comment="SHA-256 hash of the per-project CI ingest token — NEVER plaintext",
+    )
     status: Mapped[Optional[str]] = mapped_column(String(32))
 
     project: Mapped[Project] = relationship()
@@ -225,6 +231,13 @@ class JenkinsConnection(Base):
 
 class CiRun(Base):
     __tablename__ = "ci_run"
+    __table_args__ = (
+        # One run per (project, Jenkins build) — a re-POSTed build id is rejected
+        # (409). NULL build ids stay distinct (non-ingest inserts may omit it).
+        UniqueConstraint(
+            "project_id", "jenkins_build_id", name="uq_ci_run_project_build"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("project.id"))
@@ -237,6 +250,14 @@ class CiRun(Base):
     baseline_cost: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     savings: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     quality_ok: Mapped[Optional[bool]] = mapped_column(Boolean)
+    # Audit trail of the agent's pass/fail decision (the gate acts in the user's
+    # CI; we keep the record, like an ingestion run's status/errors). Not the S13
+    # quality_ok gate — that's acceptance-rate based.
+    gate: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        comment="agent pass/fail audit trail (the gate acts in the user's CI)",
+    )
+    gate_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     project: Mapped[Project] = relationship()
 

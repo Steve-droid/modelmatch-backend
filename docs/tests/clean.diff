@@ -1,0 +1,15 @@
+diff --git a/app/math_utils.py b/app/math_utils.py
+index 3333333..4444444 100644
+--- a/app/math_utils.py
++++ b/app/math_utils.py
+@@ -1,4 +1,10 @@
+ """Small numeric helpers."""
+
+
++def clamp(value: float, low: float, high: float) -> float:
++    """Return ``value`` constrained to the inclusive [low, high] range."""
++    return max(low, min(value, high))
++
++
+ def add(a: float, b: float) -> float:
+     return a + b

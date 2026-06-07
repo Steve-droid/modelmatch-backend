@@ -37,6 +37,7 @@ from agent.review import (
     MalformedFindings,
     TokenCeilingExceeded,
     apply_gate,
+    parse_findings,
     review,
 )
 from app.llm.fake import FakeLLMClient
@@ -80,6 +81,23 @@ def test_empty_findings_passes_clean():
     res = review(DIFF, FakeLLMClient(), _config())  # default = empty findings
     assert res.findings == []
     assert res.gate == "pass"
+
+
+# Real models (e.g. Bedrock Nova) wrap the JSON in a markdown fence — surfaced by
+# the live smoke (docs/tests/). The parser must tolerate it; tested offline here.
+@pytest.mark.parametrize("fenced", [
+    '```json\n{"findings":[{"severity":"high","category":"security","file":"app.py","line":4,"message":"exec on user input"}]}\n```',
+    '```\n{"findings":[{"severity":"high","category":"security","file":"app.py","line":4,"message":"exec on user input"}]}\n```',
+])
+def test_parse_findings_tolerates_markdown_fence(fenced):
+    findings = parse_findings(fenced)
+    assert len(findings) == 1 and findings[0].severity == "high"
+
+
+def test_review_parses_fenced_model_output():
+    fenced = "```json\n" + HIGH + "\n```"
+    res = review(DIFF, FakeLLMClient(fenced), _config())
+    assert res.gate == "fail" and len(res.findings) == 1
 
 
 @pytest.mark.parametrize("bad", [
