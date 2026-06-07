@@ -16,8 +16,14 @@ from app import schemas
 CONTRACT = {
     "UserCreate": {"email", "password"},
     "UserOut": {"id", "email"},
-    "ModelCreate": {"name", "vendor", "pricePerMtok", "dataPolicy"},
-    "ModelOut": {"id", "name", "vendor", "pricePerMtok", "dataPolicy"},
+    "ModelCreate": {
+        "name", "vendor", "pricePerMtok", "inputPricePerMtok", "outputPricePerMtok",
+        "dataPolicy",
+    },
+    "ModelOut": {
+        "id", "name", "vendor", "pricePerMtok", "inputPricePerMtok",
+        "outputPricePerMtok", "dataPolicy",
+    },
     "HarnessOut": {"id", "name", "vendor"},
     "BenchmarkOut": {"id", "name", "taskType"},
     "BenchmarkResultCreate": {
@@ -29,11 +35,13 @@ CONTRACT = {
         "costPerMtok", "contextWindow", "source", "sourceDocumentId", "measuredAt",
     },
     "CatalogRowIn": {
-        "model", "vendor", "benchmark", "metric", "score", "costPerMtok", "harness",
+        "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
+        "inputPricePerMtok", "outputPricePerMtok", "harness",
         "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
     },
     "CatalogRowOut": {
         "id", "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
+        "inputPricePerMtok", "outputPricePerMtok",
         "harness", "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
     },
 }

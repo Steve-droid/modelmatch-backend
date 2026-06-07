@@ -18,6 +18,7 @@ null on insert.
 """
 
 import re
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import ConfigDict, Field, field_validator
@@ -81,6 +82,11 @@ class CiRunOut(CamelModel):
     task: str
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
+    # Savings trio (S12): cost of this run on the selected model vs the project's
+    # baseline model, and the gap. NULL when a model is unpriced (see compute_savings).
+    actual_cost: Optional[Decimal] = None
+    baseline_cost: Optional[Decimal] = None
+    savings: Optional[Decimal] = None
     gate: Optional[str] = None
     gate_reason: Optional[str] = None
     findings_count: int

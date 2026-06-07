@@ -187,9 +187,11 @@ def test_ingest_persists_run_and_findings(client, db_session):
     assert run is not None
     assert run.task == "code_review"
     assert run.gate == "pass"  # audit trail persisted
-    # savings (S12) + quality (S13) untouched on insert
-    assert run.actual_cost is None and run.baseline_cost is None
-    assert run.savings is None and run.quality_ok is None
+    # S12 now fills the savings trio at ingest (see test_savings.py for the math);
+    # quality_ok (S13, acceptance-rate gate) stays untouched on insert.
+    assert run.actual_cost is not None and run.baseline_cost is not None
+    assert run.savings == run.baseline_cost - run.actual_cost
+    assert run.quality_ok is None
 
     # model_id = the project's selected (priced) catalog model
     project = db_session.get(Project, pid)
