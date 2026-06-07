@@ -17,6 +17,7 @@ from app.schemas.catalog import (
     ModelCreate,
     ModelOut,
 )
+from app.schemas.findings import AgentResult, Finding
 from app.schemas.jenkins import JenkinsConnectionOut, JenkinsConnectionUpdate
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.schemas.recommend import (
@@ -54,4 +55,6 @@ __all__ = [
     "ProjectOut",
     "JenkinsConnectionUpdate",
     "JenkinsConnectionOut",
+    "Finding",
+    "AgentResult",
 ]
