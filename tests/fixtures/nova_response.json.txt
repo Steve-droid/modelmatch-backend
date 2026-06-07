@@ -1,0 +1,8 @@
+```json
+{
+  "rows": [
+    {"model": "Amazon Nova Lite", "vendor": "Amazon", "benchmark": "SWE-bench Verified", "metric": "pass@1_percent", "score": 38.0, "costPerMtok": 0.06, "harness": "SWE-agent", "harnessVendor": "Princeton", "taskType": "agentic_coding", "contextWindow": 300000, "source": "Amazon Nova model card", "measuredAt": "2026-01-20"},
+    {"model": "Claude Haiku 4.x", "vendor": "Anthropic", "benchmark": "SWE-bench Verified", "metric": "pass@1_percent", "score": 45.0, "costPerMtok": 0.8, "harness": "SWE-agent", "harnessVendor": "Princeton", "taskType": "agentic_coding", "contextWindow": 200000, "source": "Anthropic model card", "measuredAt": "2026-02-01"}
+  ]
+}
+```
