@@ -7,8 +7,9 @@ __pycache__
 .ruff_cache
 tests
 docs
-agent
 migrations
+# NOTE: `agent/` is intentionally NOT ignored — the agent image (agent/Dockerfile)
+# COPYs it. The backend image doesn't COPY it, so it's harmless in that context.
 *.md
 .env
 .env.*
