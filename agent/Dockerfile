@@ -13,11 +13,12 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# --extra llm pulls the real provider SDKs (anthropic/gemini/bedrock) the agent needs.
+RUN uv sync --frozen --no-dev --extra llm --no-install-project
 # the agent shares app.llm + the findings contract (direct import, no drift)
 COPY app ./app
 COPY agent ./agent
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra llm
 
 # --- runtime: slim, non-root; reads diff on stdin, writes findings JSON on stdout ---
 FROM python:3.12-slim AS runtime

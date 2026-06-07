@@ -39,8 +39,19 @@ git diff origin/main...HEAD | python -m agent
 
 | var | default | meaning |
 |---|---|---|
-| `LLM_CLIENT` | `fake` | provider seam (`fake` now; `anthropic`/`gemini`/`bedrock` in v0.10.1) |
+| `LLM_CLIENT` | `fake` | provider seam: `fake` \| `anthropic` \| `gemini` \| `bedrock` |
 | `AGENT_MODEL` | `fake-model` | model id to call + report (BYOK) |
 | `AGENT_MAX_TOKENS` | `1024` | per-call output cap |
-| `AGENT_TOKEN_CEILING` | `100000` | abort if cumulative tokens exceed |
+| `AGENT_TOKEN_CEILING` | `100000` | abort if estimated/actual tokens exceed (preflight + post-call) |
 | `AGENT_FAIL_SEVERITIES` | `high,critical` | severities that fail the build |
+
+### Providers (creds read by each SDK — never stored by us)
+
+| `LLM_CLIENT` | creds | notes |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | BYOK; demo Haiku live / Sonnet computed |
+| `gemini` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | BYOK free-tier (`google-genai` SDK) — **non-confidential code only** (trains on inputs) |
+| `bedrock` | AWS creds via **IRSA** | in-cluster Nova; no static keys |
+
+Real providers need the `llm` extra (in the image already; locally `uv sync --extra llm`).
+Live smoke: `RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py`.

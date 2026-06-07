@@ -5,6 +5,7 @@ the gate, enforces the token ceiling, rejects malformed output, and never writes
 Plus a CLI smoke test (`python -m agent`).
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -12,6 +13,24 @@ import sys
 from pathlib import Path
 
 import pytest
+
+
+def _installed(modname: str) -> bool:
+    try:
+        return importlib.util.find_spec(modname) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+def _run_cli(diff: str, env_overrides: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "agent"],
+        input=diff,
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env={**os.environ, **env_overrides},
+    )
 
 from agent.config import AgentConfig
 from agent.review import (
@@ -146,3 +165,26 @@ def test_cli_runs_on_fake_and_exits_zero():
     assert body["findings"] == []
     assert body["gate"] == "pass"
     assert "tokensIn" in body and "tokensOut" in body  # camelCase contract
+
+
+def test_cli_invalid_llm_client_exits_4_with_structured_error():
+    proc = _run_cli(DIFF, {"LLM_CLIENT": "nope"})
+    assert proc.returncode == 4
+    assert proc.stdout == ""  # nothing half-written to stdout
+    assert "Traceback" not in proc.stderr  # no raw traceback
+    err = json.loads(proc.stderr)  # structured JSON on stderr
+    assert err["error"] == "llm_client_error"
+    assert "nope" in err["detail"]
+    assert "exec(user_input)" not in proc.stderr  # diff never leaked
+
+
+@pytest.mark.skipif(_installed("anthropic"), reason="anthropic installed → would attempt a real call")
+def test_cli_missing_sdk_exits_4_with_structured_error():
+    # anthropic isn't installed in the dev venv → RuntimeError at call time
+    proc = _run_cli(DIFF, {"LLM_CLIENT": "anthropic", "AGENT_MODEL": "claude-haiku-4"})
+    assert proc.returncode == 4
+    assert proc.stdout == ""
+    assert "Traceback" not in proc.stderr
+    err = json.loads(proc.stderr)
+    assert err["error"] == "llm_client_error"
+    assert "exec(user_input)" not in proc.stderr  # diff never leaked

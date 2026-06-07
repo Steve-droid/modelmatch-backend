@@ -16,6 +16,15 @@ dependencies = [
     "pyjwt>=2.9",
 ]
 
+[project.optional-dependencies]
+# Real LLM provider SDKs — installed in the agent image (uv sync --extra llm) and
+# in-cluster; NOT needed for the core API or the offline fake-client tests.
+llm = [
+    "anthropic>=0.39",
+    "google-genai>=1.0",
+    "boto3>=1.35",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

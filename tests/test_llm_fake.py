@@ -32,7 +32,7 @@ def test_factory_builds_fake():
     assert client.complete("s", "u", 10).model == "x"
 
 
-@pytest.mark.parametrize("name", ["anthropic", "gemini", "bedrock", "nope"])
-def test_factory_rejects_unimplemented_providers(name):
+@pytest.mark.parametrize("name", ["nope", "", "openai"])
+def test_factory_rejects_unknown_provider(name):
     with pytest.raises(ValueError):
         build_llm_client(name)
