@@ -17,6 +17,7 @@ from app.schemas.catalog import (
     ModelCreate,
     ModelOut,
 )
+from app.schemas.jenkins import JenkinsConnectionOut, JenkinsConnectionUpdate
 from app.schemas.project import ProjectCreate, ProjectOut
 from app.schemas.recommend import (
     BaselineOut,
@@ -51,4 +52,6 @@ __all__ = [
     "PrefillResult",
     "ProjectCreate",
     "ProjectOut",
+    "JenkinsConnectionUpdate",
+    "JenkinsConnectionOut",
 ]

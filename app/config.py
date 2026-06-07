@@ -5,7 +5,7 @@ quality knobs, AWS/Bedrock/S3, and the LLM seam — see .env.example for the ful
 """
 
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     baseline_model_id: str = "Claude Sonnet 4.x"
     # ≥ 1 so suggested = shortlist[0] can never index an empty list.
     recommendation_shortlist_size: int = Field(default=3, ge=1)
+
+    # Secret-store backend for Jenkins/BYOK refs (S9). Only `fake` (in-memory,
+    # dev/tests) is implemented today; a Literal so an unsupported value (e.g. aws)
+    # fails at config-load, not mid-request. The aws (Secrets Manager via IRSA)
+    # adapter is added with its implementation.
+    secret_store: Literal["fake"] = "fake"
 
     @field_validator("jwt_secret")
     @classmethod
