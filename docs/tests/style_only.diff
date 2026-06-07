@@ -1,0 +1,16 @@
+diff --git a/app/report.py b/app/report.py
+index 5555555..6666666 100644
+--- a/app/report.py
++++ b/app/report.py
+@@ -1,5 +1,11 @@
+ """Reporting helpers."""
+
++import os
++
++def Calc(x):
++    tmp=x*2
++    return tmp
++
+
+ def render():
+     return "report"

@@ -1,0 +1,16 @@
+diff --git a/app/users.py b/app/users.py
+index 1111111..2222222 100644
+--- a/app/users.py
++++ b/app/users.py
+@@ -8,6 +8,12 @@ def get_db():
+     return sqlite3.connect("app.db")
+
+
++def find_user(conn, username):
++    # builds the SQL straight from caller-supplied input
++    query = "SELECT * FROM users WHERE name = '" + username + "'"
++    return conn.execute(query).fetchall()
++
++
+ def healthcheck():
+     return "ok"

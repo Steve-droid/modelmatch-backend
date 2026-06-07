@@ -40,10 +40,30 @@ def build_user_prompt(diff: str) -> str:
     return f"Review this unified diff:\n\n{diff}"
 
 
+def _strip_code_fence(text: str) -> str:
+    """Unwrap a ```json … ``` (or bare ```) markdown fence many models emit.
+
+    The contract asks for strict JSON, but real models (e.g. Bedrock Nova) routinely
+    wrap it in a fence. Stripping a fenced block is safe and deterministic; anything
+    that still isn't JSON is rejected as MalformedFindings below.
+    """
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    t = t[3:]  # drop the opening ```
+    newline = t.find("\n")
+    if newline != -1 and t[:newline].strip().isalpha():  # optional language tag (json)
+        t = t[newline + 1 :]
+    t = t.rstrip()
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
+
 def parse_findings(text: str) -> list[Finding]:
     """Strictly parse the model's JSON into validated Findings (untrusted output)."""
     try:
-        data = json.loads(text)
+        data = json.loads(_strip_code_fence(text))
     except json.JSONDecodeError as exc:
         raise MalformedFindings(f"response was not valid JSON: {exc}") from exc
 

@@ -59,6 +59,37 @@ class Settings(BaseSettings):
     # adapter is added with its implementation.
     secret_store: Literal["fake"] = "fake"
 
+    # CI integration (S11). The ci-setup snippet embeds the backend's public base
+    # URL (where the user's Jenkins POSTs results) and the agent image ref to pull.
+    # Env-driven, no hardcoding; real values land with the infra/GitOps stories.
+    public_base_url: str = "http://localhost:8000"
+    agent_image: str = "modelmatch-agent:latest"
+    aws_region: str = "ap-south-1"  # used by the Bedrock variant of the snippet
+
+    # Provider config baked into the generated CI snippet (the agent is BYOK +
+    # provider-agnostic). Demo default = Anthropic Haiku live. Caps are low (the
+    # per-run ceiling on the user's key). Must be exactly one real provider — never
+    # "fake" (the savings "proof" would be meaningless) and never an unknown string
+    # the agent's factory would reject at runtime.
+    ci_agent_llm_client: str = "anthropic"      # anthropic | gemini | bedrock
+    ci_agent_model: str = "claude-haiku-4-5"
+    ci_agent_max_tokens: int = Field(default=1024, ge=1)
+    ci_agent_token_ceiling: int = Field(default=20_000, ge=1)
+
+    @field_validator("ci_agent_llm_client")
+    @classmethod
+    def _validate_agent_provider(cls, v: str) -> str:
+        # Normalize to lowercase and accept ONLY the real BYOK providers — rejects
+        # "fake" and any typo/unsupported value at config-load, not mid-request.
+        allowed = {"anthropic", "gemini", "bedrock"}
+        norm = v.strip().lower()
+        if norm not in allowed:
+            raise ValueError(
+                f"CI_AGENT_LLM_CLIENT must be one of {sorted(allowed)} "
+                f"(got {v!r}); 'fake' and unknown providers are not allowed."
+            )
+        return norm
+
     @field_validator("jwt_secret")
     @classmethod
     def _reject_placeholder_secret(cls, v: str) -> str:
