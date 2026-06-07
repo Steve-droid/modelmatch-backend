@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # The "expensive default" savings are measured against. A model NAME (matched
     # within the ranked comparability group), not a DB id — ids differ per fresh
     # DB. Falls back to the highest-cost model in the group if absent. Demo = Sonnet.
-    baseline_model_id: str = "Claude Sonnet 4.x"
+    baseline_model_id: str = "Claude Sonnet 4.6"
     # ≥ 1 so suggested = shortlist[0] can never index an empty list.
     recommendation_shortlist_size: int = Field(default=3, ge=1)
 

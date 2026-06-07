@@ -56,7 +56,7 @@ def test_create_project_persists_and_returns_enriched(client, db_session):
     assert body["selectedOptionId"] == pick["selected_option_id"]
     # enriched names resolved from the referenced rows
     assert body["selectedOptionModel"] == pick["selected_model"]
-    assert body["baselineModel"] == pick["baseline_model"]  # "Claude Sonnet 4.x"
+    assert body["baselineModel"] == pick["baseline_model"]  # "Claude Sonnet 4.6"
     assert body["baselineVendor"] == "Anthropic"
 
     # persisted + owner-scoped

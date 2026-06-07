@@ -53,7 +53,7 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
     assert body["suggested"]["model"] == "Gemini 2.5 Flash"
 
     # baseline = the configured model NAME, found in-group, with its model identity
-    assert body["baseline"]["model"] == "Claude Sonnet 4.x"
+    assert body["baseline"]["model"] == "Claude Sonnet 4.6"
     assert body["baseline"]["selection"] == "configured"
     assert float(body["baseline"]["costPerMtok"]) == 3.0
     assert body["baseline"]["vendor"] == "Anthropic"

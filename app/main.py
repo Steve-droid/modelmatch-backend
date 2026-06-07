@@ -12,7 +12,16 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, benchmarks, ci, findings, jenkins, projects, recommend
+from app.api import (
+    auth,
+    benchmarks,
+    ci,
+    findings,
+    jenkins,
+    projects,
+    recommend,
+    savings,
+)
 from app.config import get_settings
 from app.db import check_db
 
@@ -35,6 +44,7 @@ app.include_router(projects.router)
 app.include_router(jenkins.router)
 app.include_router(ci.router)
 app.include_router(findings.router)
+app.include_router(savings.router)
 
 
 @app.get("/")
