@@ -61,3 +61,16 @@ def test_valid_recommender_knobs_accepted(monkeypatch):
     s = Settings(_env_file=None)
     assert s.rank_weight_medium == 0.5
     assert s.recommendation_shortlist_size == 5
+
+
+def test_unsupported_secret_store_rejected_at_config_load(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("SECRET_STORE", "aws")  # not implemented yet → fail fast
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_default_secret_store_is_fake(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.delenv("SECRET_STORE", raising=False)
+    assert Settings(_env_file=None).secret_store == "fake"

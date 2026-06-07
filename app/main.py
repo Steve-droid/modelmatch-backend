@@ -12,7 +12,7 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import auth, benchmarks, projects, recommend
+from app.api import auth, benchmarks, jenkins, projects, recommend
 from app.config import get_settings
 from app.db import check_db
 
@@ -32,6 +32,7 @@ app.include_router(auth.router)
 app.include_router(benchmarks.router)
 app.include_router(recommend.router)
 app.include_router(projects.router)
+app.include_router(jenkins.router)
 
 
 @app.get("/")
