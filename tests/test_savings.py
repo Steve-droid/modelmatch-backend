@@ -16,14 +16,23 @@ from sqlalchemy import func, select
 
 from app.catalog import service as catalog_service
 from app.catalog.seed import load_seed
-from app.models import CiRun, LlmCall, LlmUsage, Model, Project, RecommendationOption
+from app.models import (
+    Benchmark,
+    BenchmarkResult,
+    CiRun,
+    LlmCall,
+    LlmUsage,
+    Model,
+    Project,
+    RecommendationOption,
+)
 from app.savings.service import Pricing, compute_savings, price_for
 from app.schemas.catalog import CatalogRowIn
 
 # Reuse the S11 CI test helpers (register → recommend → project → mint token).
 from tests.test_ci import _agent_result, _make_project, _mint_token, _register
 
-# Demo split prices (per MTok): Claude Haiku 4.5 vs Claude Sonnet 4.x baseline.
+# Demo split prices (per MTok): Claude Haiku 4.5 vs Claude Sonnet 4.6 baseline.
 HAIKU = Pricing(Decimal("1.0"), Decimal("5.0"))
 SONNET = Pricing(Decimal("3.0"), Decimal("15.0"))
 
@@ -100,7 +109,7 @@ def test_compute_savings_unpriced_returns_none_trio(sel, base):
 
 def test_seed_populates_split_prices(db_session):
     load_seed(db_session)
-    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.x"))
+    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
     haiku = db_session.scalar(select(Model).where(Model.name == "Claude Haiku 4.5"))
     assert (sonnet.input_price_per_mtok, sonnet.output_price_per_mtok) == (
         Decimal("3.0"),
@@ -110,6 +119,23 @@ def test_seed_populates_split_prices(db_session):
         Decimal("1.0"),
         Decimal("5.0"),
     )
+
+
+def test_seed_records_deepswe_sonnet_provenance(db_session):
+    """Sonnet 4.6 (the demo baseline) carries a DeepSWE provenance row — real
+    benchmark metadata (score 32, sourced from deepswe.datacurve.ai), distinct from
+    its SWE-bench ranking anchor. Pricing stays the per-MTok $3/$15 (NOT DeepSWE's
+    $/task), which the split-price assertion above already pins."""
+    load_seed(db_session)
+    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
+    deepswe_rows = db_session.scalars(
+        select(BenchmarkResult)
+        .join(Benchmark, BenchmarkResult.benchmark_id == Benchmark.id)
+        .where(BenchmarkResult.model_id == sonnet.id, Benchmark.name == "DeepSWE")
+    ).all()
+    assert len(deepswe_rows) == 1
+    assert deepswe_rows[0].score == Decimal("32.0")
+    assert "deepswe.datacurve.ai" in (deepswe_rows[0].source or "")
 
 
 def test_upsert_backfills_split_from_blended_when_absent(db_session):
@@ -129,7 +155,7 @@ def test_upsert_backfills_split_from_blended_when_absent(db_session):
 
 def test_price_for_resolves_and_handles_missing(db_session):
     load_seed(db_session)
-    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.x"))
+    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
     assert price_for(db_session, sonnet.id) == SONNET
     assert price_for(db_session, None) is None
     assert price_for(db_session, 999999) is None  # unknown id

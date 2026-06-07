@@ -266,6 +266,13 @@ class CiRun(Base):
         comment="agent pass/fail audit trail (the gate acts in the user's CI)",
     )
     gate_reason: Mapped[Optional[str]] = mapped_column(Text)
+    # When the run was ingested. The dashboard's time axis (S14): ci_run had no
+    # timestamp, so the savings series/KPIs ("this period", projected monthly,
+    # ?range) had nothing to order or bucket by. DB-assigned on insert
+    # (server_default now()) — same pattern as chat_message.created_at.
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     project: Mapped[Project] = relationship()
 
