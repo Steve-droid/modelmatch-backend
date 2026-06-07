@@ -20,7 +20,8 @@ class AgentConfig(BaseSettings):
         env_file=".env", extra="ignore", protected_namespaces=(), populate_by_name=True
     )
 
-    # Provider seam (BYOK). Only `fake` is wired in v0.10.0; real adapters in v0.10.1.
+    # Provider seam (BYOK): fake | anthropic | gemini | bedrock. Creds are read by
+    # each SDK directly (ANTHROPIC_API_KEY / GOOGLE_API_KEY / AWS-IRSA) — never stored.
     llm_client: str = Field(
         default="fake", validation_alias=AliasChoices("LLM_CLIENT", "AGENT_LLM_CLIENT")
     )
