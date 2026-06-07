@@ -178,6 +178,22 @@ def test_cli_invalid_llm_client_exits_4_with_structured_error():
     assert "exec(user_input)" not in proc.stderr  # diff never leaked
 
 
+def test_cli_missing_diff_file_exits_4_with_structured_error(tmp_path):
+    missing = tmp_path / "no-such-file.patch"
+    proc = subprocess.run(
+        [sys.executable, "-m", "agent", "--diff", str(missing)],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env={**os.environ, "LLM_CLIENT": "fake"},
+    )
+    assert proc.returncode == 4
+    assert proc.stdout == ""
+    assert "Traceback" not in proc.stderr  # no raw traceback
+    err = json.loads(proc.stderr)
+    assert err["error"] == "diff_read_error"
+
+
 @pytest.mark.skipif(_installed("anthropic"), reason="anthropic installed → would attempt a real call")
 def test_cli_missing_sdk_exits_4_with_structured_error():
     # anthropic isn't installed in the dev venv → RuntimeError at call time

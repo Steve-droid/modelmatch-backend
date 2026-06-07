@@ -9,7 +9,7 @@ raw traceback, and never the prompt/diff/secrets:
     1  gate fail (blocking findings)
     2  malformed model output
     3  token ceiling exceeded
-    4  LLM client/config/provider failure
+    4  config / input / LLM client / provider failure
 """
 
 from __future__ import annotations
@@ -46,7 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # invalid AGENT_* env / config
         return _fail(4, "config_error", f"{type(exc).__name__}: {exc}")
 
-    diff = _read_diff(args.diff)
+    try:
+        diff = _read_diff(args.diff)
+    except OSError as exc:  # missing/unreadable --diff file (no traceback, no leak)
+        return _fail(4, "diff_read_error", f"{type(exc).__name__}: {exc}")
 
     try:
         client = build_llm_client(config.llm_client, model=config.model_id)

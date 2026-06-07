@@ -34,6 +34,7 @@ git diff origin/main...HEAD | python -m agent
 | 1 | gate **fail** (blocking findings) |
 | 2 | malformed model output |
 | 3 | token ceiling exceeded |
+| 4 | config / input / LLM client / provider failure (structured JSON on stderr) |
 
 ## Config (env)
 
