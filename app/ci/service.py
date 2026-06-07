@@ -30,6 +30,7 @@ from app.models import (
     RecommendationOption,
     User,
 )
+from app.savings.service import compute_savings, price_for
 from app.schemas.ci import CiRunIngest, CiRunOut, CiSetupOut
 
 
@@ -218,16 +219,31 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
             detail="A run for this Jenkins build id already exists",
         )
 
+    # Savings engine (S12): cost this run on the SELECTED model (the project's pick)
+    # vs the project's BASELINE model, both already concrete ids — using each model's
+    # split input/output prices. Deterministic, no LLM, zero tokens. An unpriced model
+    # leaves the trio NULL (compute_savings returns None) without failing the ingest.
+    selected_model_id = _resolve_model_id(db, project)
+    actual_cost, baseline_cost, savings = compute_savings(
+        payload.tokens_in,
+        payload.tokens_out,
+        price_for(db, selected_model_id),
+        price_for(db, project.baseline_model_id),
+    )
+
     run = CiRun(
         project_id=project.id,
         jenkins_build_id=payload.jenkins_build_id,
-        model_id=_resolve_model_id(db, project),
+        model_id=selected_model_id,
         task="code_review",
         tokens_in=payload.tokens_in,
         tokens_out=payload.tokens_out,
+        actual_cost=actual_cost,
+        baseline_cost=baseline_cost,
+        savings=savings,
         gate=payload.gate,  # audit trail of the agent's pass/fail decision
         gate_reason=payload.gate_reason,
-        # savings (S12) + quality_ok (S13) intentionally left null.
+        # quality_ok (S13, acceptance-rate gate) intentionally left null.
     )
     db.add(run)
     db.flush()  # assign run.id for the finding FKs
@@ -254,6 +270,9 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
         task=run.task,
         tokens_in=run.tokens_in,
         tokens_out=run.tokens_out,
+        actual_cost=run.actual_cost,
+        baseline_cost=run.baseline_cost,
+        savings=run.savings,
         gate=run.gate,
         gate_reason=run.gate_reason,
         findings_count=len(payload.findings),

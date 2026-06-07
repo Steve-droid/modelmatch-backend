@@ -12,7 +12,7 @@ from app.models import Benchmark, BenchmarkResult, Model
 from app.schemas.catalog import CatalogRowIn
 
 ROW = {
-    "model": "Claude Haiku 4.x",
+    "model": "Claude Haiku 4.5",
     "vendor": "Anthropic",
     "benchmark": "SWE-bench Verified",
     "metric": "pass@1_percent",
@@ -40,7 +40,7 @@ def test_post_creates_normalized_rows_and_get_lists_them(client, db_session):
     resp = client.post("/benchmarks", json=ROW, headers=headers)
     assert resp.status_code == 201
     body = resp.json()
-    assert body["model"] == "Claude Haiku 4.x"
+    assert body["model"] == "Claude Haiku 4.5"
     assert float(body["costPerMtok"]) == 0.8
     assert "id" in body
 

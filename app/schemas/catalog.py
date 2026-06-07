@@ -17,7 +17,11 @@ DataPolicy = Literal["trains_on_input", "private"]
 class ModelCreate(CamelModel):
     name: str
     vendor: str
+    # price_per_mtok = LEGACY blended display/ranking price. input/output = S12 split
+    # pricing the savings engine uses (real APIs price input vs output differently).
     price_per_mtok: Optional[Decimal] = None
+    input_price_per_mtok: Optional[Decimal] = None
+    output_price_per_mtok: Optional[Decimal] = None
     data_policy: Optional[DataPolicy] = None
 
 
@@ -26,6 +30,8 @@ class ModelOut(CamelModel):
     name: str
     vendor: str
     price_per_mtok: Optional[Decimal] = None
+    input_price_per_mtok: Optional[Decimal] = None
+    output_price_per_mtok: Optional[Decimal] = None
     data_policy: Optional[DataPolicy] = None
 
 
@@ -71,7 +77,12 @@ class CatalogRowIn(CamelModel):
     benchmark: str
     metric: str
     score: Decimal
+    # cost_per_mtok = the legacy blended price (recommender ranking + display); REQUIRED.
+    # The split input/output prices (S12 savings) are OPTIONAL — when absent the upsert
+    # backfills both from cost_per_mtok, so old/partial rows stay costable.
     cost_per_mtok: Decimal
+    input_price_per_mtok: Optional[Decimal] = None
+    output_price_per_mtok: Optional[Decimal] = None
     harness: Optional[str] = None
     harness_vendor: Optional[str] = None
     task_type: Optional[str] = None

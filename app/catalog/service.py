@@ -62,6 +62,20 @@ def upsert_catalog_row(
     (seed / `POST /benchmarks`, id=None) never clears an existing link.
     """
     model = get_or_create_model(db, row.model, row.vendor)
+    # Legacy blended price: kept as the recommender-ranking + catalog-display figure
+    # (NOT read by the S12 savings engine). Last-write-wins; the `!=` guard keeps an
+    # unchanged re-upsert (seed/ingestion idempotency) from dirtying the row.
+    if row.cost_per_mtok is not None and model.price_per_mtok != row.cost_per_mtok:
+        model.price_per_mtok = row.cost_per_mtok
+    # S12 split pricing (authoritative for savings): use the row's explicit input/output
+    # prices when present; otherwise BACKFILL both from the legacy blended cost_per_mtok
+    # so old/partial rows stay costable (input==output==blended reproduces the old math).
+    in_price = row.input_price_per_mtok if row.input_price_per_mtok is not None else row.cost_per_mtok
+    out_price = row.output_price_per_mtok if row.output_price_per_mtok is not None else row.cost_per_mtok
+    if in_price is not None and model.input_price_per_mtok != in_price:
+        model.input_price_per_mtok = in_price
+    if out_price is not None and model.output_price_per_mtok != out_price:
+        model.output_price_per_mtok = out_price
     benchmark = get_or_create_benchmark(db, row.benchmark, row.task_type)
     harness = get_or_create_harness(db, row.harness, row.harness_vendor)
 
@@ -102,6 +116,8 @@ def upsert_catalog_row(
         harness=harness.name if harness else None,
         harness_vendor=harness.vendor if harness else None,
         metric=row.metric,
+        input_price_per_mtok=model.input_price_per_mtok,
+        output_price_per_mtok=model.output_price_per_mtok,
         **mutable,
     )
 
@@ -125,6 +141,8 @@ def list_catalog(db: Session) -> list[CatalogRowOut]:
                 task_type=r.task_type,
                 score=r.score,
                 cost_per_mtok=r.cost_per_mtok,
+                input_price_per_mtok=r.model.input_price_per_mtok,
+                output_price_per_mtok=r.model.output_price_per_mtok,
                 context_window=r.context_window,
                 source=r.source,
                 measured_at=r.measured_at,

@@ -65,7 +65,15 @@ class Model(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     vendor: Mapped[str] = mapped_column(String(100))
+    # LEGACY blended catalog-display / recommender-ranking price. NOT used by the S12
+    # savings engine (real LLM APIs price input vs output differently — see the split
+    # columns below). Kept for backward compatibility + a single display figure.
     price_per_mtok: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
+    # S12 split pricing (authoritative for savings): real per-MTok input vs output
+    # rates. Populated by the catalog upsert (explicit, or backfilled from the legacy
+    # blended price for old/partial rows). NULL when a model is unpriced.
+    input_price_per_mtok: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
+    output_price_per_mtok: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     data_policy: Mapped[Optional[str]] = mapped_column(DATA_POLICY)
 
 
