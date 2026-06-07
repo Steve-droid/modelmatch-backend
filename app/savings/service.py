@@ -23,6 +23,7 @@ Money invariants:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple, Optional
 
@@ -80,6 +81,60 @@ def compute_savings(
     baseline_cost = _cost(tokens_in, tokens_out, baseline)
     savings = _money(baseline_cost - actual)
     return actual, baseline_cost, savings
+
+
+class HonestSavings(NamedTuple):
+    """The quality-gated savings breakdown (S13, architecture §8).
+
+    The **headline** `cumulative` counts only quality-passing runs. Sub-threshold
+    runs aren't silently dropped — their savings are summed into `quality_risk` and
+    counted, so the dashboard can surface "you'd save this much more if quality held."
+    Un-gated (unrated) runs are counted separately (`unrated_runs`); they bank nothing
+    yet but aren't a quality failure either.
+    """
+
+    cumulative: Decimal       # Σ savings over runs where quality_ok IS TRUE — the honest headline
+    banked_runs: int          # how many quality-passing runs contributed
+    quality_risk: Decimal     # Σ savings over quality_ok IS FALSE (excluded but SURFACED)
+    quality_risk_runs: int
+    unrated_runs: int         # quality_ok IS NULL (un-gated — neither banked nor at risk)
+
+
+def honest_cumulative_savings(
+    runs: Iterable[tuple[Optional[Decimal], Optional[bool]]],
+) -> HonestSavings:
+    """Aggregate per-run `(savings, quality_ok)` into the honest cumulative (§8).
+
+    Only `quality_ok IS TRUE` runs count toward `cumulative` (the headline). Failing
+    runs (`quality_ok IS FALSE`) are EXCLUDED from the headline but their savings are
+    tallied into `quality_risk` so they stay visible — never silently dropped. NULL
+    (un-gated) runs are counted separately. A run with NULL savings (unpriced model)
+    contributes 0 to the money totals but still counts toward its run tally.
+
+    Pure arithmetic, all `Decimal` — no DB, no LLM.
+    """
+    cumulative = Decimal("0")
+    quality_risk = Decimal("0")
+    banked_runs = quality_risk_runs = unrated_runs = 0
+
+    for savings, quality_ok in runs:
+        amount = savings if savings is not None else Decimal("0")
+        if quality_ok is True:
+            cumulative += amount
+            banked_runs += 1
+        elif quality_ok is False:
+            quality_risk += amount
+            quality_risk_runs += 1
+        else:  # None → un-gated (unrated)
+            unrated_runs += 1
+
+    return HonestSavings(
+        cumulative=_money(cumulative),
+        banked_runs=banked_runs,
+        quality_risk=_money(quality_risk),
+        quality_risk_runs=quality_risk_runs,
+        unrated_runs=unrated_runs,
+    )
 
 
 def price_for(db: Session, model_id: Optional[int]) -> Optional[Pricing]:

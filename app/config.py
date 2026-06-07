@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # ≥ 1 so suggested = shortlist[0] can never index an empty list.
     recommendation_shortlist_size: int = Field(default=3, ge=1)
 
+    # Quality gate (S13, OQ1). A CI run's findings get accept/reject feedback; the
+    # per-run acceptance rate (accepted / rated) must be ≥ this threshold for the run
+    # to count toward the honest cumulative savings. Env-driven, never hardcoded in
+    # the gate logic. 0..1; default 0.8.
+    quality_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+
     # Secret-store backend for Jenkins/BYOK refs (S9). Only `fake` (in-memory,
     # dev/tests) is implemented today; a Literal so an unsupported value (e.g. aws)
     # fails at config-load, not mid-request. The aws (Secrets Manager via IRSA)

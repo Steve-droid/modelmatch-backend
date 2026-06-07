@@ -286,6 +286,18 @@ class CiFinding(Base):
 
 class FindingFeedback(Base):
     __tablename__ = "finding_feedback"
+    __table_args__ = (
+        # One verdict per (finding, user) — the quality-gate invariant, enforced in
+        # the DB (S13) so parallel POSTs across replicas can't double-insert (the
+        # ON CONFLICT target for the upsert). NULLS NOT DISTINCT so a NULL user_id
+        # still dedupes, matching the codebase's other natural keys.
+        UniqueConstraint(
+            "ci_finding_id",
+            "user_id",
+            name="uq_finding_feedback_finding_user",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ci_finding_id: Mapped[int] = mapped_column(ForeignKey("ci_finding.id"))
