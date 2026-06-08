@@ -5,6 +5,10 @@ The product's **proof**: a standalone image (built from this repo) that runs in 
 provider-agnostic `LLMClient` (BYOK), and emits findings + token usage as JSON with a
 **pass/fail gate** — all in CI. It **never edits the repo**.
 
+> How the agent fits the whole product — the metadata-only Jenkins connection, the two Jenkins
+> credentials it reads, and the savings/quality loop it feeds — is in the
+> [Runbook & Demo Walkthrough](../docs/runbook.md) (§6).
+
 ## Run
 
 ```bash
