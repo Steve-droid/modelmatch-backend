@@ -8,8 +8,10 @@ Run locally:
     docker compose up                             # backend + Postgres
 """
 
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api import (
@@ -48,6 +50,26 @@ app.include_router(ci.router)
 app.include_router(findings.router)
 app.include_router(savings.router)
 app.include_router(chat.router)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """422 responses without echoing the submitted value back.
+
+    FastAPI's default handler reflects each rejected field's `input` into the error
+    body. For our `extra="forbid"` schemas that means a stray `jenkinsToken` /
+    `modelApiKey` (jenkins) or a raw `diff` (ci-run ingest) would be mirrored straight
+    back — violating the project's secret/diff-hygiene rule. Strip `input` (and `ctx`,
+    which can carry the offending value) from every error so we keep the useful
+    type/location/message but never reflect the value. Applies to ALL routes.
+    """
+    safe = [
+        {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        for err in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": safe})  # 422; constant is deprecated
 
 
 @app.get("/")

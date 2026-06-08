@@ -97,8 +97,9 @@ def test_put_rejects_jenkins_token_secret_422(client, db_session):
         headers=headers,
     )
     assert resp.status_code == 422  # extra='forbid' — secrets are not accepted
-    # (Pydantic's 422 echoes the offending field back to the *sender* — its own value;
-    # we never store it or log it server-side, which is the guarantee that matters.)
+    # The 422 must NOT echo the submitted secret back (our validation-error handler
+    # strips `input`), so a stray secret never appears in the response body.
+    assert LEAKED not in resp.text
 
     # Nothing was persisted: no connection row, no stored secret.
     assert db_session.scalar(
@@ -120,6 +121,7 @@ def test_put_rejects_model_api_key_secret_422(client, db_session):
         headers=headers,
     )
     assert resp.status_code == 422
+    assert LEAKED not in resp.text  # the secret is not echoed back in the 422 body
     assert get_secret_store().get(f"local://secret/project/{pid}/model-api-key") is None
 
 

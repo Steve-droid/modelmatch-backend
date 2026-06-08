@@ -476,6 +476,8 @@ def test_ingest_rejects_raw_diff_field_and_never_stores_it(client, db_session):
     body = {**_agent_result("with-diff"), "diff": "diff --git a/secret.py b/secret.py\n+API_KEY='sk-leak'"}
     resp = client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token})
     assert resp.status_code == 422  # extra='forbid' rejects it
+    # The 422 must not echo the rejected diff back either (handler strips `input`).
+    assert "diff --git" not in resp.text and "sk-leak" not in resp.text
 
     # Nothing was persisted, and no diff content leaked into any ci_run/ci_finding column.
     assert db_session.scalar(select(func.count()).select_from(CiRun).where(CiRun.project_id == pid)) == 0
