@@ -35,6 +35,8 @@ from app.chat.retrieve import retrieve_catalog
 from app.config import get_settings
 from app.llm import LLMClient, LLMResponse, approx_tokens, build_llm_client
 from app.models import ChatMessage, LlmCall, RetrievalTrace, User
+from app.observability import LLMObservation
+from app.observability.metrics import record_llm_call
 from app.savings import dashboard
 
 _OFF_TOPIC_MESSAGE = (
@@ -66,12 +68,15 @@ class _CappedClient:
         self._db = db
         self._cap = cap
         self.responses: list[LLMResponse] = []
+        self.latency_ms = 0  # summed across every complete() this turn (for S16)
 
     def complete(self, system: str, user: str, max_tokens: int) -> LLMResponse:
         estimate = approx_tokens(system) + approx_tokens(user) + max_tokens
         reservation = llm_budget.reserve_tokens(self._db, estimate, self._cap)
         try:
+            started = time.perf_counter()
             resp = self._inner.complete(system, user, max_tokens)
+            self.latency_ms += int((time.perf_counter() - started) * 1000)
         except Exception:
             llm_budget.release(self._db, reservation)
             raise
@@ -118,6 +123,37 @@ def _catalog_traces(columns: list[str], rows: list[tuple]) -> list[TraceEntry]:
     return out
 
 
+def _observe_chat_turn(
+    capped: "_CappedClient",
+    provider: str,
+    model_fallback: str,
+    question: str,
+    sql: str | None,
+    row_count: int | None,
+    *,
+    status: str,
+    error_kind: str | None,
+) -> None:
+    """Emit ONE per-request LLM log line + metrics for a chat turn, totalling whatever
+    calls happened (SQL-gen + answer-gen, or a partial prefix on failure). The question
+    + generated SQL appear only as derived metadata — never raw."""
+    record_llm_call(
+        LLMObservation(
+            purpose="chat",
+            provider=provider,
+            model=capped.responses[-1].model if capped.responses else model_fallback,
+            tokens_in=sum(r.tokens_in for r in capped.responses),
+            tokens_out=sum(r.tokens_out for r in capped.responses),
+            latency_ms=capped.latency_ms,
+            retrieved_context_size=row_count,
+            status=status,
+            error_kind=error_kind,
+            prompt=question,
+            query=sql,
+        )
+    )
+
+
 def answer_question(
     db: Session,
     project_id: int,
@@ -135,52 +171,82 @@ def answer_question(
     `llm_budget.HourlyTokenCapExceeded` if the hourly cap would be busted (→ 429); no
     state is persisted in that case (it raises before any answer is formed)."""
     settings = get_settings()
+    provider = settings.llm_client
     # Deterministic, trusted, owner-scoped: the user's own spend figures. NO LLM.
     savings = dashboard.project_savings(db, project_id, current_user)
     summary = opener.format_savings_snapshot(savings)
 
     capped = _CappedClient(client, db, settings.llm_hourly_token_cap)
-    retrieval = retrieve_catalog(
-        question,
-        summary,
-        capped,
-        engine=engine,
-        max_tokens=settings.chat_max_tokens,
-        max_rows=settings.chat_max_rows,
-        history=history,
-        max_retries=settings.chat_retry_max,
-    )
 
     # The spend summary grounds every answered turn — always traced (kind='savings').
     sav_ref, sav_snippet = opener.savings_trace(savings)
     traces: list[TraceEntry] = []
+    error_kind: str | None = None
 
-    if retrieval.refused:
-        answer, ok, refused = _OFF_TOPIC_MESSAGE, False, True
-    elif not retrieval.ok:
-        answer, ok, refused = _FAILED_MESSAGE, False, False
-    else:
-        gen = generate_answer(
+    try:
+        retrieval = retrieve_catalog(
             question,
             summary,
-            retrieval.sql,
-            retrieval.columns,
-            retrieval.rows,
             capped,
+            engine=engine,
             max_tokens=settings.chat_max_tokens,
+            max_rows=settings.chat_max_rows,
+            history=history,
+            max_retries=settings.chat_retry_max,
         )
-        answer, ok, refused = gen.answer, True, False
-        traces.append(TraceEntry(kind="savings", ref=sav_ref, snippet=sav_snippet))
-        traces.extend(_catalog_traces(retrieval.columns, retrieval.rows))
+
+        if retrieval.refused:
+            answer, ok, refused, status = _OFF_TOPIC_MESSAGE, False, True, "ok"
+        elif not retrieval.ok:
+            # SQL gen/exec failed after retries — a controlled failure (not an exception);
+            # surface it as an errored turn. retrieval.error text is NEVER logged.
+            answer, ok, refused, status = _FAILED_MESSAGE, False, False, "error"
+            error_kind = "retrieval_failed"
+        else:
+            gen = generate_answer(
+                question,
+                summary,
+                retrieval.sql,
+                retrieval.columns,
+                retrieval.rows,
+                capped,
+                max_tokens=settings.chat_max_tokens,
+            )
+            answer, ok, refused, status = gen.answer, True, False, "ok"
+            traces.append(TraceEntry(kind="savings", ref=sav_ref, snippet=sav_snippet))
+            traces.extend(_catalog_traces(retrieval.columns, retrieval.rows))
+    except llm_budget.HourlyTokenCapExceeded:
+        # Over the hourly cap → aborted (→ 429). No turn is persisted; emit a throttled
+        # line (status only — the message's token numbers are never logged) and re-raise.
+        _observe_chat_turn(
+            capped, provider, settings.bedrock_model_id, question, None, None,
+            status="throttled", error_kind="HourlyTokenCapExceeded",
+        )
+        raise
+    except Exception as exc:
+        _observe_chat_turn(
+            capped, provider, settings.bedrock_model_id, question, None, None,
+            status="error", error_kind=type(exc).__name__,
+        )
+        raise
 
     tokens_in = sum(r.tokens_in for r in capped.responses)
     tokens_out = sum(r.tokens_out for r in capped.responses)
     model = capped.responses[-1].model if capped.responses else retrieval.model
 
+    # Per-request LLM log line + token metrics (S16): one line per chat turn, totalling
+    # the SQL-gen + answer-gen calls. The question + generated SQL appear only as derived
+    # metadata; retrieved_context_size is the catalog rows that grounded it.
+    _observe_chat_turn(
+        capped, provider, model, question, retrieval.sql, retrieval.row_count,
+        status=status, error_kind=error_kind,
+    )
+
     assistant_message_id: int | None = None
     if persist:
         assistant_message_id = _persist_turn(
-            db, project_id, question, answer, traces, tokens_in, tokens_out
+            db, project_id, question, answer, traces, tokens_in, tokens_out,
+            latency_ms=capped.latency_ms, status=status,
         )
 
     return ChatResult(
@@ -209,6 +275,9 @@ def _persist_turn(
     traces: list[TraceEntry],
     tokens_in: int,
     tokens_out: int,
+    *,
+    latency_ms: int | None = None,
+    status: str = "ok",
 ) -> int:
     """Persist the user + assistant messages, the answer's retrieval trace, and one
     llm_call row (purpose='chat', ci_run_id NULL). Returns the assistant message id."""
@@ -230,8 +299,8 @@ def _persist_turn(
             model_id=None,  # Nova's model string isn't a catalog model row (S16 logs it)
             tokens_in=tokens_in,
             tokens_out=tokens_out,
-            latency_ms=None,
-            status="ok",
+            latency_ms=latency_ms,
+            status=status,
         )
     )
     db.commit()

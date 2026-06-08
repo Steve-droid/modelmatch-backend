@@ -36,7 +36,10 @@ class MigrationSettings(BaseSettings):
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: alembic's logging config must not silence the
+    # app's own loggers (e.g. the S16 'modelmatch.llm' per-request line) when a
+    # migration runs in-process — fileConfig disables all unlisted loggers by default.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", MigrationSettings().database_url)
 

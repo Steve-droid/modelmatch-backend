@@ -1,140 +1,142 @@
-<mxGraphModel dx="1600" dy="900" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="1080" math="0" shadow="0">
-  <root>
-    <mxCell id="dm_root" />
-    <mxCell id="dm_layer" parent="dm_root" />
-
-    <mxCell id="dm_title" value="ModelMatch — Data Model (PostgreSQL 16, in-cluster, NO embeddings / NO pgvector)" style="text;html=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="dm_layer">
-      <mxGeometry x="40" y="14" width="1780" height="34" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_user" value="user&#10;id · email · password_hash" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="dm_layer">
-      <mxGeometry x="740" y="70" width="260" height="60" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_grp_rec" value="Deterministic recommender + catalog (ingestion #3)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f3eefb;strokeColor=#9673a6;collapsible=0;verticalAlign=top;fontStyle=1;" vertex="1" parent="dm_layer">
-      <mxGeometry x="40" y="190" width="660" height="640" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_reqprofile" value="requirements_profile&#10;id · user_id→user · task_types[] (enum) ·&#10;budget_sensitivity · latency_need&#10;(FORM-collected, no embedding)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="30" y="60" width="320" height="90" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_recoption" value="recommendation_option&#10;id · profile_id→requirements_profile · rank ·&#10;rank_score · model_id→model ·&#10;harness_id→harness (nullable) ·&#10;informed_by[]→benchmark_result (deterministic)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="30" y="190" width="350" height="110" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_benchresult" value="benchmark_result&#10;id · model_id→model · harness_id→harness (nullable) ·&#10;benchmark_id→benchmark · task_type · score · metric ·&#10;cost_per_mtok · context_window · source ·&#10;source_document_id→source_document (nullable) · measured_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="30" y="340" width="440" height="110" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_srcdoc" value="source_document&#10;id · kind · uri/s3_key ·&#10;content_hash (idempotency key) ·&#10;fetched_at · status&#10;(INGESTION #3 input)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="30" y="490" width="280" height="110" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_model" value="model&#10;id · name · vendor ·&#10;price_per_mtok ·&#10;data_policy(trains|private)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="430" y="190" width="210" height="90" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_harness" value="harness&#10;id · name · vendor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="490" y="490" width="150" height="60" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_benchmark" value="benchmark&#10;id · name · task_type (enum)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="dm_grp_rec">
-      <mxGeometry x="470" y="580" width="170" height="60" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_grp_ci" value="Project · Jenkins · CI savings loop (agent = the proof)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#eafaf0;strokeColor=#82b366;collapsible=0;verticalAlign=top;fontStyle=1;" vertex="1" parent="dm_layer">
-      <mxGeometry x="760" y="190" width="560" height="640" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_project" value="project&#10;id · user_id→user · name ·&#10;selected_option_id→recommendation_option ·&#10;baseline_model_id→model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="120" y="55" width="320" height="90" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_jenkins" value="jenkins_connection&#10;id · project_id→project · base_url · job_name ·&#10;jenkins_token_ref · model_api_key_ref · status&#10;(secret REFS — never plaintext)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="20" y="185" width="350" height="90" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_cirun" value="ci_run&#10;id · project_id→project · jenkins_build_id ·&#10;model_id→model · task='code_review' ·&#10;tokens_in · tokens_out · actual_cost ·&#10;baseline_cost · savings · quality_ok" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="20" y="315" width="330" height="110" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_finding" value="ci_finding&#10;id · ci_run_id→ci_run · severity ·&#10;category(security|style) · file · line · message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="20" y="460" width="360" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_feedback" value="finding_feedback&#10;id · ci_finding_id→ci_finding ·&#10;verdict(accept|reject) · user_id&#10;(quality signal → acceptance rate)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="20" y="555" width="360" height="80" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_alert" value="proactive_alert&#10;id · project_id ·&#10;kind(upgrade|downgrade) ·&#10;reason · evidence · status&#10;(SEPARABLE / feature-flagged)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;" vertex="1" parent="dm_grp_ci">
-      <mxGeometry x="410" y="315" width="130" height="130" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_grp_chat" value="Grounded Q&amp;A chat (#4)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#fdeef0;strokeColor=#b85450;collapsible=0;verticalAlign=top;fontStyle=1;" vertex="1" parent="dm_layer">
-      <mxGeometry x="1380" y="190" width="440" height="330" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_chatmsg" value="chat_message&#10;id · project_id→project ·&#10;role(user|assistant) · text · created_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="dm_grp_chat">
-      <mxGeometry x="50" y="55" width="340" height="80" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_trace" value="retrieval_trace&#10;id · chat_message_id→chat_message ·&#10;kind(savings|benchmark_result) ·&#10;ref · snippet&#10;(what grounded the answer — auditable)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="dm_grp_chat">
-      <mxGeometry x="50" y="185" width="340" height="110" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_llmcall" value="llm_call  —  LLM observability across all THREE uses&#10;id · ci_run_id→ci_run (nullable) · purpose(ingestion|chat|agent) ·&#10;model_id→model (nullable) · tokens_in · tokens_out · latency_ms · status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="dm_layer">
-      <mxGeometry x="1380" y="570" width="440" height="120" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_e_user_reqprofile" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;startArrow=none;fontSize=10;" edge="1" source="dm_user" target="dm_reqprofile" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_user_project" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;startArrow=none;fontSize=10;" edge="1" source="dm_user" target="dm_project" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_e_profile_option" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_reqprofile" target="dm_recoption" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_option_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_recoption" target="dm_model" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_option_bench" value="informed_by" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" edge="1" source="dm_recoption" target="dm_benchresult" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_bench_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_benchresult" target="dm_model" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_bench_harness" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_benchresult" target="dm_harness" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_bench_benchmark" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_benchresult" target="dm_benchmark" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_srcdoc_bench" value="content_hash → idempotent" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" edge="1" source="dm_srcdoc" target="dm_benchresult" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_e_project_jenkins" value="1—1" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_project" target="dm_jenkins" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_project_cirun" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_project" target="dm_cirun" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_cirun_finding" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_cirun" target="dm_finding" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_finding_feedback" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_finding" target="dm_feedback" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_cirun_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;dashed=1;" edge="1" source="dm_cirun" target="dm_model" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry">
-        <mxPoint x="725" y="370" as="targetPoint" />
-      </mxGeometry>
-    </mxCell>
-    <mxCell id="dm_e_project_alert" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" edge="1" source="dm_project" target="dm_alert" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_e_project_chatmsg" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_project" target="dm_chatmsg" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="dm_e_chatmsg_trace" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" edge="1" source="dm_chatmsg" target="dm_trace" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_e_cirun_llmcall" value="0..1—N (agent)" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;dashed=1;" edge="1" source="dm_cirun" target="dm_llmcall" parent="dm_layer">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-
-    <mxCell id="dm_note" value="Dashed = secret refs / nullable FK / separable. No embedding columns anywhere (pgvector dropped). source_document.content_hash makes ingestion idempotent; retrieval_trace makes the chat's grounding auditable; llm_call records all three LLM uses (ci_run_id null for ingestion + chat)." style="text;html=1;fontSize=11;fontStyle=2;align=left;verticalAlign=middle;fillColor=#f5f5f5;strokeColor=#999999;rounded=1;spacingLeft=10;spacingRight=10;whiteSpace=wrap;" vertex="1" parent="dm_layer">
-      <mxGeometry x="40" y="870" width="1780" height="70" as="geometry" />
-    </mxCell>
-  </root>
-</mxGraphModel>
+<mxfile host="65bd71144e">
+    <diagram id="9P_WEtpGwZROuWRkHiM6" name="Page-1">
+        <mxGraphModel dx="934" dy="858" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="1080" math="0" shadow="0">
+            <root>
+                <mxCell id="dm_root"/>
+                <mxCell id="dm_layer" parent="dm_root"/>
+                <mxCell id="dm_title" value="ModelMatch — Data Model (PostgreSQL 16, in-cluster, NO embeddings / NO pgvector)" style="text;html=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="40" y="14" width="1780" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_user" value="user&#xa;id · email · password_hash" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="910" y="57" width="260" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_grp_rec" value="Deterministic recommender + catalog (ingestion #3)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#f3eefb;strokeColor=#9673a6;collapsible=0;verticalAlign=top;fontStyle=1;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="40" y="190" width="660" height="640" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_reqprofile" value="requirements_profile&#xa;id · user_id→user · task_types[] (enum) ·&#xa;budget_sensitivity · latency_need&#xa;(FORM-collected, no embedding)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="45" y="52" width="320" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_recoption" value="recommendation_option&#xa;id · profile_id→requirements_profile · rank ·&#xa;rank_score · model_id→model ·&#xa;harness_id→harness (nullable) ·&#xa;informed_by[]→benchmark_result (deterministic)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="30" y="190" width="350" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_benchresult" value="benchmark_result&#xa;id · model_id→model · harness_id→harness (nullable) ·&#xa;benchmark_id→benchmark · task_type · score · metric ·&#xa;cost_per_mtok · context_window · source ·&#xa;source_document_id→source_document (nullable) · measured_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="30" y="340" width="440" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_srcdoc" value="source_document&#xa;id · kind · uri/s3_key ·&#xa;content_hash (idempotency key) ·&#xa;fetched_at · status&#xa;(INGESTION #3 input)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;dashed=1;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="30" y="490" width="280" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_model" value="model&#xa;id · name · vendor ·&#xa;price_per_mtok ·&#xa;data_policy(trains|private)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="430" y="190" width="210" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_harness" value="harness&#xa;id · name · vendor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="490" y="490" width="150" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_benchmark" value="benchmark&#xa;id · name · task_type (enum)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" parent="dm_grp_rec" vertex="1">
+                    <mxGeometry x="470" y="580" width="170" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_grp_ci" value="Project · Jenkins · CI savings loop (agent = the proof)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#eafaf0;strokeColor=#82b366;collapsible=0;verticalAlign=top;fontStyle=1;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="760" y="190" width="560" height="640" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_project" value="project&#xa;id · user_id→user · name ·&#xa;selected_option_id→recommendation_option ·&#xa;baseline_model_id→model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontStyle=1;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="120" y="55" width="320" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_jenkins" value="jenkins_connection&#xa;id · project_id→project · base_url · job_name ·&#xa;jenkins_token_ref · model_api_key_ref · status&#xa;(secret REFS — never plaintext)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="20" y="185" width="350" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_cirun" value="ci_run&#xa;id · project_id→project · jenkins_build_id ·&#xa;model_id→model · task=&#39;code_review&#39; ·&#xa;tokens_in · tokens_out · actual_cost ·&#xa;baseline_cost · savings · quality_ok" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="20" y="315" width="330" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_finding" value="ci_finding&#xa;id · ci_run_id→ci_run · severity ·&#xa;category(security|style) · file · line · message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="20" y="460" width="360" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_feedback" value="finding_feedback&#xa;id · ci_finding_id→ci_finding ·&#xa;verdict(accept|reject) · user_id&#xa;(quality signal → acceptance rate)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="20" y="555" width="360" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_alert" value="proactive_alert&#xa;id · project_id ·&#xa;kind(upgrade|downgrade) ·&#xa;reason · evidence · status&#xa;(SEPARABLE / feature-flagged)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;" parent="dm_grp_ci" vertex="1">
+                    <mxGeometry x="410" y="315" width="130" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_grp_chat" value="Grounded Q&amp;A chat (#4)" style="swimlane;startSize=34;whiteSpace=wrap;html=1;fillColor=#fdeef0;strokeColor=#b85450;collapsible=0;verticalAlign=top;fontStyle=1;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="1380" y="190" width="440" height="330" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_chatmsg" value="chat_message&#xa;id · project_id→project ·&#xa;role(user|assistant) · text · created_at" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;" parent="dm_grp_chat" vertex="1">
+                    <mxGeometry x="50" y="55" width="340" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_trace" value="retrieval_trace&#xa;id · chat_message_id→chat_message ·&#xa;kind(savings|benchmark_result) ·&#xa;ref · snippet&#xa;(what grounded the answer — auditable)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;" parent="dm_grp_chat" vertex="1">
+                    <mxGeometry x="50" y="185" width="340" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_llmcall" value="llm_call  —  LLM observability across all THREE uses&#xa;id · ci_run_id→ci_run (nullable) · purpose(ingestion|chat|agent) ·&#xa;model_id→model (nullable) · tokens_in · tokens_out · latency_ms · status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="1380" y="570" width="440" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_user_reqprofile" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;startArrow=none;fontSize=10;" parent="dm_layer" source="dm_user" target="dm_reqprofile" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_user_project" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;startArrow=none;fontSize=10;" parent="dm_layer" source="dm_user" target="dm_project" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_profile_option" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_reqprofile" target="dm_recoption" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_option_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_recoption" target="dm_model" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_option_bench" value="informed_by" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" parent="dm_layer" source="dm_recoption" target="dm_benchresult" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_bench_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_benchresult" target="dm_model" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_bench_harness" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_benchresult" target="dm_harness" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_bench_benchmark" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_benchresult" target="dm_benchmark" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_srcdoc_bench" value="content_hash → idempotent" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" parent="dm_layer" source="dm_srcdoc" target="dm_benchresult" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_project_jenkins" value="1—1" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_project" target="dm_jenkins" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_project_cirun" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_project" target="dm_cirun" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1040" y="485"/>
+                            <mxPoint x="945" y="485"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="dm_e_cirun_finding" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_cirun" target="dm_finding" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_finding_feedback" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_finding" target="dm_feedback" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_cirun_model" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;dashed=1;" parent="dm_layer" source="dm_cirun" target="dm_model" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="725" y="370" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="dm_e_project_alert" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;fontStyle=2;" parent="dm_layer" source="dm_project" target="dm_alert" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1040" y="484"/>
+                            <mxPoint x="1235" y="484"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="dm_e_project_chatmsg" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_project" target="dm_chatmsg" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_chatmsg_trace" value="1—N" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;" parent="dm_layer" source="dm_chatmsg" target="dm_trace" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_e_cirun_llmcall" value="0..1—N (agent)" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=open;fontSize=10;dashed=1;" parent="dm_layer" source="dm_cirun" target="dm_llmcall" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="dm_note" value="Dashed = secret refs / nullable FK / separable. No embedding columns anywhere (pgvector dropped). source_document.content_hash makes ingestion idempotent; retrieval_trace makes the chat&#39;s grounding auditable; llm_call records all three LLM uses (ci_run_id null for ingestion + chat)." style="text;html=1;fontSize=11;fontStyle=2;align=left;verticalAlign=middle;fillColor=#f5f5f5;strokeColor=#999999;rounded=1;spacingLeft=10;spacingRight=10;whiteSpace=wrap;" parent="dm_layer" vertex="1">
+                    <mxGeometry x="40" y="870" width="1780" height="70" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

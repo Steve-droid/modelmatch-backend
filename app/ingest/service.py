@@ -34,6 +34,8 @@ from app.ingest.prompts import INGEST_SYSTEM_PROMPT, build_user_prompt
 from app.ingest.validation import parse_catalog_rows
 from app.llm import LLMClient, approx_tokens, build_llm_client
 from app.models import LlmCall, SourceDocument
+from app.observability import LLMObservation
+from app.observability.metrics import record_llm_call
 from app.schemas.ingest import IngestRequest, IngestResult
 
 
@@ -78,21 +80,74 @@ def ingest_source(
 
     system = INGEST_SYSTEM_PROMPT
     user = build_user_prompt(request.source_text)
+    # The in-cluster provider + intended model (used as the metric/log label on the
+    # failure paths, where there is no provider response to read the model from).
+    provider = settings.llm_client
+    intended_model = settings.bedrock_model_id
+
     # Worst case = prompt in + full output budget. Reserve it before spending a token.
     estimate = approx_tokens(system) + approx_tokens(user) + out_cap
-    reservation = llm_budget.reserve_tokens(db, estimate, cap)
+    try:
+        reservation = llm_budget.reserve_tokens(db, estimate, cap)
+    except llm_budget.HourlyTokenCapExceeded:
+        # Over the hourly cap → aborted before any provider call. Record it as throttled
+        # (status only — the exception message carries token numbers we never log).
+        record_llm_call(
+            LLMObservation(
+                purpose="ingestion",
+                provider=provider,
+                model=intended_model,
+                tokens_in=0,
+                tokens_out=0,
+                status="throttled",
+                error_kind="HourlyTokenCapExceeded",
+                prompt=request.source_text,
+            )
+        )
+        raise
 
     try:
         started = time.perf_counter()
         resp = client.complete(system, user, out_cap)
         latency_ms = int((time.perf_counter() - started) * 1000)
-    except Exception:
+    except Exception as exc:
         # A failed call must not burn the hour's budget — release the reservation.
         llm_budget.release(db, reservation)
+        # Record the failure: the exception CLASS only, never its message (it may carry
+        # provider error text / prompt fragments).
+        record_llm_call(
+            LLMObservation(
+                purpose="ingestion",
+                provider=provider,
+                model=intended_model,
+                tokens_in=0,
+                tokens_out=0,
+                status="error",
+                error_kind=type(exc).__name__,
+                prompt=request.source_text,
+            )
+        )
         raise
 
     used = resp.tokens_in + resp.tokens_out
     llm_budget.reconcile(db, reservation, used)
+
+    # Per-request LLM log line + token metrics (S16). The unstructured source appears in
+    # the log only as derived metadata (size / hash / redaction count), never raw;
+    # ingestion retrieves nothing, so retrieved_context_size is None.
+    record_llm_call(
+        LLMObservation(
+            purpose="ingestion",
+            provider=provider,
+            model=resp.model,
+            tokens_in=resp.tokens_in,
+            tokens_out=resp.tokens_out,
+            latency_ms=latency_ms,
+            retrieved_context_size=None,
+            status="ok",
+            prompt=request.source_text,
+        )
+    )
 
     # One llm_call row per real extraction (purpose=ingestion, ci_run_id null). model_id
     # stays null: Nova's model string isn't a catalog model row (S16 logs the string).
