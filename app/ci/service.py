@@ -157,9 +157,9 @@ CFGEOF
 }}"""
 
 
-def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
+def _require_connected(db: Session, project_id: int, current_user: User) -> JenkinsConnection:
+    """Owner-scoped + must already have a Jenkins connection (the token lives on it)."""
     _require_owned_project(db, project_id, current_user)
-
     conn = db.scalar(
         select(JenkinsConnection).where(JenkinsConnection.project_id == project_id)
     )
@@ -168,15 +168,12 @@ def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Jenkins connection not found — configure Jenkins first",
         )
+    return conn
 
-    # Mint-once: issue a token only if none exists yet (we keep only the hash, so a
-    # previously-minted token can never be re-shown — rotation is a later endpoint).
-    token_plain: str | None = None
-    if conn.ci_token_hash is None:
-        token_plain = mint_token()
-        conn.ci_token_hash = hash_token(token_plain)  # store the hash, never plaintext
-        db.commit()
 
+def _setup_out(project_id: int, token_plain: str | None) -> CiSetupOut:
+    """Build the snippet + ingest URL (the stable parts); `token_plain` is non-None
+    only when a token was just minted/rotated (never re-shown otherwise)."""
     settings = get_settings()
     ci_runs_url = f"{settings.public_base_url}/projects/{project_id}/ci-runs"
     snippet = build_review_snippet(
@@ -194,6 +191,33 @@ def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
         ci_runs_url=ci_runs_url,
         token=token_plain,
     )
+
+
+def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
+    conn = _require_connected(db, project_id, current_user)
+
+    # Mint-once: issue a token only if none exists yet (we keep only the hash, so a
+    # previously-minted token is never re-shown here — use rotate_ci_token to recover
+    # a lost token, which the FE exposes as "Regenerate token").
+    token_plain: str | None = None
+    if conn.ci_token_hash is None:
+        token_plain = mint_token()
+        conn.ci_token_hash = hash_token(token_plain)  # store the hash, never plaintext
+        db.commit()
+
+    return _setup_out(project_id, token_plain)
+
+
+def rotate_ci_token(db: Session, project_id: int, current_user: User) -> CiSetupOut:
+    """Issue a FRESH per-project ingest token, replacing any existing one. The
+    recovery path for a token that was minted but never copied (mint-once means it
+    can't be re-shown) — the old token stops working immediately. Owner-scoped; needs
+    an existing Jenkins connection."""
+    conn = _require_connected(db, project_id, current_user)
+    token_plain = mint_token()
+    conn.ci_token_hash = hash_token(token_plain)
+    db.commit()
+    return _setup_out(project_id, token_plain)
 
 
 def _resolve_model_id(db: Session, project: Project) -> int | None:

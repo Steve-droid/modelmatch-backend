@@ -186,6 +186,65 @@ def test_ci_setup_requires_auth(client):
     assert client.get("/projects/1/ci-setup").status_code == 401
 
 
+# --- ci-token rotation (recovery for a lost mint-once token) ------------------
+
+def test_ci_token_rotate_issues_a_fresh_token(client, db_session):
+    """Rotation is the recovery path: it returns a NEW plaintext token, replaces the
+    stored hash, and the previous token stops working."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_rotate@example.com")
+    pid = _make_project(client, headers)
+    _connect_jenkins(client, headers, pid)
+
+    first = _mint_token(client, headers, pid)  # original mint-once token
+
+    resp = client.post(f"/projects/{pid}/ci-setup/rotate", headers=headers)
+    assert resp.status_code == 200
+    rotated = resp.json()["token"]
+    assert rotated and rotated != first  # a different, freshly-minted token
+
+    conn = db_session.scalar(
+        select(JenkinsConnection).where(JenkinsConnection.project_id == pid)
+    )
+    db_session.expire(conn)
+    assert conn.ci_token_hash == hash_token(rotated)  # new token is authoritative
+    assert conn.ci_token_hash != hash_token(first)  # old token no longer valid
+
+
+def test_ci_token_rotate_works_when_never_minted(client, db_session):
+    """Rotation also mints for a connection that never called ci-setup (still recovers
+    a usable token); a subsequent GET stays mint-once (token None)."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_rotate_fresh@example.com")
+    pid = _make_project(client, headers)
+    _connect_jenkins(client, headers, pid)
+
+    rotated = client.post(f"/projects/{pid}/ci-setup/rotate", headers=headers).json()["token"]
+    assert rotated
+    after = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()
+    assert after["token"] is None  # already minted → not re-shown
+
+
+def test_ci_token_rotate_requires_connection_404(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_rotate_noconn@example.com")
+    pid = _make_project(client, headers)
+    assert client.post(f"/projects/{pid}/ci-setup/rotate", headers=headers).status_code == 404
+
+
+def test_ci_token_rotate_is_owner_scoped(client, db_session):
+    load_seed(db_session)
+    headers_a, _ = _register(client, db_session, "ci_rotate_a@example.com")
+    headers_b, _ = _register(client, db_session, "ci_rotate_b@example.com")
+    pid_a = _make_project(client, headers_a)
+    _connect_jenkins(client, headers_a, pid_a)
+    assert client.post(f"/projects/{pid_a}/ci-setup/rotate", headers=headers_b).status_code == 403
+
+
+def test_ci_token_rotate_requires_auth(client):
+    assert client.post("/projects/1/ci-setup/rotate").status_code == 401
+
+
 # --- ci-runs ingest -------------------------------------------------------
 
 def test_ingest_persists_run_and_findings(client, db_session):
