@@ -48,9 +48,11 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
     assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
     assert body["comparabilityGroup"]["metric"] == "review_score_percent"
 
-    # cost-leaning: the cheap, near-best reviewer wins — Claude Haiku 4.5 (85.0 @ $1/$5)
+    # cost-leaning (w_q=0.40): the cheapest CodeReviewBench row wins — the illustrative
+    # Nova 2 Lite (68.0 @ $0.85), ahead of Haiku. (Quality-leaning flips back to Haiku —
+    # see test_budget_sensitivity_steers_the_pick.)
     assert body["suggested"]["rank"] == 1
-    assert body["suggested"]["model"] == "Claude Haiku 4.5"
+    assert body["suggested"]["model"] == "Nova 2 Lite"
 
     # baseline = the configured model NAME, found in-group, with its model identity
     assert body["baseline"]["model"] == "Claude Sonnet 4.5"
@@ -69,12 +71,11 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
         assert "rankScore" in o and "benchmarkResultId" in o
 
 
-def test_low_sensitivity_narrows_the_gap_to_quality_models(client, db_session):
-    """With the CodeReviewBench data, Claude Haiku 4.5 is both near-best and cheapest,
-    so it stays #1 across the slider (the product thesis: a cheap model is good enough).
-    What the slider DOES move is the spread: leaning to quality (low budget-sensitivity)
-    pulls the pricier, higher-quality runner-up much closer to the #1 pick than leaning
-    to cost (high sensitivity) does."""
+def test_budget_sensitivity_steers_the_pick(client, db_session):
+    """The cost<->quality slider visibly moves the WINNER, not just the spread. With the
+    curated CodeReviewBench data — Haiku (85.0 @ $2) and the illustrative Nova 2 Lite
+    (68.0 @ $0.85) — cost-leaning (high) picks the cheaper Nova, while quality-leaning
+    (medium/low) picks the higher-quality Haiku. This is the demo's headline behaviour."""
     load_seed(db_session)
     headers = _auth_header(client)
 
@@ -85,19 +86,15 @@ def test_low_sensitivity_narrows_the_gap_to_quality_models(client, db_session):
             headers=headers,
         ).json()
 
-    high = pick("high")  # cost-leaning
-    low = pick("low")    # quality-leaning
+    high = pick("high")      # cost-leaning  → cheapest competitive model
+    medium = pick("medium")  # balanced      → quality reasserts
+    low = pick("low")        # quality-leaning
 
-    # Haiku wins regardless of the slider; the quality runner-up (Gemini 2.5 Pro) is #2.
-    assert high["suggested"]["model"] == "Claude Haiku 4.5"
+    assert high["suggested"]["model"] == "Nova 2 Lite"
+    assert medium["suggested"]["model"] == "Claude Haiku 4.5"
     assert low["suggested"]["model"] == "Claude Haiku 4.5"
-    assert low["shortlist"][1]["model"] == "Gemini 2.5 Pro"
-
-    def gap(body: dict) -> float:
-        return float(body["shortlist"][0]["rankScore"]) - float(body["shortlist"][1]["rankScore"])
-
-    # Quality-leaning narrows the #1→#2 gap (the higher-quality model catches up).
-    assert gap(low) < gap(high)
+    # the winner actually changes across the slider (not merely the runner-up gap)
+    assert high["suggested"]["model"] != low["suggested"]["model"]
 
 
 def test_persists_profile_options_evidence(client, db_session):
@@ -189,10 +186,9 @@ def test_multiple_task_types_rank_within_dominant_group(client, db_session):
         json={"taskTypes": ["ci_review", "agentic_coding"], "budgetSensitivity": "medium"},
         headers=headers,
     ).json()
-    # Both groups have 4 rows; the tie breaks deterministically to the lexicographically
-    # smaller (benchmark, metric) — ("CodeReviewBench", "review_score_percent") <
-    # ("SWE-bench Verified", "pass@1_percent") — so we rank within the CI-review group and
-    # never normalize a review_score row against a pass@1 row.
+    # The CI-review group (CodeReviewBench, 5 rows incl. the illustrative Nova) outnumbers
+    # the agentic_coding group (SWE-bench, 4 rows), so it's the dominant comparability
+    # group — we rank within it and never normalize a review_score row against a pass@1 row.
     assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
     assert body["comparabilityGroup"]["metric"] == "review_score_percent"
 
