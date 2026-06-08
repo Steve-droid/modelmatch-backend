@@ -36,9 +36,11 @@ def _register(client, db_session, email: str) -> tuple[dict[str, str], int]:
 
 
 def _make_project(client, headers) -> int:
+    # ci_review is the demo path: the pick is Claude Haiku 4.5 and the configured
+    # baseline (Claude Sonnet 4.5) is in the group, so savings are real (selected != baseline).
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "high"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "high"},
         headers=headers,
     ).json()
     return client.post(

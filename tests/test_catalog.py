@@ -82,7 +82,7 @@ def test_seed_loads_idempotently(db_session):
     count_after_second = db_session.scalar(select(func.count()).select_from(BenchmarkResult))
     assert count_after_second == count_after_first  # no duplicates
 
-    # models deduped across rows (Claude Opus / Nova each appear twice in the seed)
+    # models deduped across rows (Claude Haiku 4.5 appears twice: ci_review + agentic_coding)
     model_count = db_session.scalar(select(func.count()).select_from(Model))
     assert model_count == 7
 

@@ -140,6 +140,47 @@ def test_partial_rows_keep_valid_drop_invalid(db_session):
     assert _count(db_session, BenchmarkResult) == 1
 
 
+def test_ingest_v2_captures_split_prices_and_derives_ranking_cost(db_session):
+    """ingest-v2: SEPARATE input/output prices are stored as-is, and the ranking
+    cost_per_mtok is DERIVED by the backend (3:1 blend), NOT taken from the LLM's
+    costPerMtok placeholder. This is what keeps seeded and ingested rows on one cost
+    basis. Source gives costPerMtok=1.0 but split 1.0/8.0 → ranking cost = 2.75."""
+    from decimal import Decimal
+
+    from app.ingest.prompts import PROMPT_VERSION
+    from app.models import Model
+
+    assert PROMPT_VERSION == "ingest-v2"  # the bump is in effect
+
+    with_split = json.dumps(
+        {
+            "rows": [
+                {
+                    "model": "Split Priced Model", "vendor": "ACME",
+                    "benchmark": "CodeReviewBench", "metric": "review_score_percent",
+                    "score": 80.0, "costPerMtok": 1.0,
+                    "inputPricePerMtok": 1.0, "outputPricePerMtok": 8.0,
+                },
+            ]
+        }
+    )
+    fake = FakeLLMClient(responses=with_split)
+    result = ingest_source(db_session, _req(), fake)
+
+    assert result.status == "ingested"
+    assert result.rows_created == 1
+    m = db_session.scalar(select(Model).where(Model.name == "Split Priced Model"))
+    # split prices stored from the source, NOT backfilled to input == output
+    assert m.input_price_per_mtok == Decimal("1.0")
+    assert m.output_price_per_mtok == Decimal("8.0")
+    # ranking cost is the derived 3:1 blend (3*1 + 8)/4 = 2.75 — NOT the LLM's 1.0
+    assert m.price_per_mtok == Decimal("2.75")
+    br = db_session.scalar(
+        select(BenchmarkResult).where(BenchmarkResult.model_id == m.id)
+    )
+    assert br.cost_per_mtok == Decimal("2.75")
+
+
 def test_out_of_bounds_values_are_rejected(db_session):
     out_of_bounds = json.dumps(
         {
