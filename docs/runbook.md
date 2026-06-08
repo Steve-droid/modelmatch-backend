@@ -8,9 +8,9 @@
 > `architecture.md`, `module-reconciliation.md`, `00-backlog.md`).
 
 **Status snapshot (this doc is truthful to committed code):**
-backend **v0.19.0**, frontend **v0.4.0**. Built through **S16** (observability) on the backend and
-**S15a/S15b/S15c** on the frontend. Items marked **[planned]** or **[in progress]** below are **not yet
-merged** — do not assume they run.
+backend **v0.20.0**, frontend **v0.5.0**. Built through **S16** (observability) plus **S15d** project
+lifecycle on the backend, and **S15a–S15d** on the frontend. Items marked **[planned]** below are **not
+yet merged** — do not assume they run.
 
 ---
 
@@ -184,8 +184,14 @@ in the user's own Jenkins, and the generated CI snippet references them by id.
   connection's status becomes `configured`.
 - **Mint-once CI token:** `GET /projects/{id}/ci-setup` mints the per-project ingest token **once**,
   stores only its **hash**, and returns the **plaintext on that first fetch only**. Later fetches return
-  `token: null` — a token already minted can never be re-shown (rotation is a later endpoint). Copy it
-  when shown.
+  `token: null` — a token already minted can never be re-shown. Copy it when shown.
+- **Lost-token recovery (rotation):** `POST /projects/{id}/ci-setup/rotate` issues a **fresh** token
+  (and invalidates the old one), returning the new plaintext once. The FE surfaces this as
+  **"Regenerate token."**
+- **Project lifecycle (S15d):** edit / re-pick the model + baseline with `PATCH /projects/{id}`; remove
+  a project with `DELETE /projects/{id}` (204, **FK cascade** over the Jenkins connection / ci_runs /
+  findings / recommendation rows). The onboarding wizard **defers project creation to commit**, so
+  abandoning it leaves **no orphaned project**.
 - The CI snippet keeps secrets out of any command's argv: the BYOK key is passed to `docker run` by name
   (`-e VAR`), and the CI token is written to a `0600` curl config file, never a CLI argument.
 
@@ -319,9 +325,10 @@ uv run pytest tests/test_savings.py # a focused module
 RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py
 ```
 
-Coverage today (~288 backend test functions): deterministic-pick scoring, savings math, ingestion
+Coverage today (~310 backend test functions): deterministic-pick scoring, savings math, ingestion
 idempotency + output validation, chat grounding + honest refusal + SELECT-only SQL, quality gate,
-auth/owner-scoping, migration round-trip, observability log line + `/metrics`, agent review.
+auth/owner-scoping, project lifecycle (edit/delete cascade + token rotation), migration round-trip,
+observability log line + `/metrics`, agent review.
 
 ```bash
 # Frontend (from modelmatch-frontend/)
@@ -347,9 +354,10 @@ is fine for everything except the live agent call.
    → get a **suggested model + a Sonnet baseline + a shortlist**. Same inputs → same pick
    (deterministic).
 4. **Create a project** from the pick.
-5. **Connect Jenkins** — enter **base URL + job name** only (no secrets). Fetch **CI setup** → copy the
-   **one-time CI token** and the **stage snippet**. In the user's Jenkins, add the two credentials
-   (`modelmatch-ci-token`, `modelmatch-model-api-key`).
+5. **Connect Jenkins** — enter **base URL + job name** only (validated; no secrets). Fetch **CI setup**
+   → copy the **one-time CI token** and the **stage snippet** (lost it? **Regenerate token**). In the
+   user's Jenkins, add the two credentials (`modelmatch-ci-token`, `modelmatch-model-api-key`). The
+   project isn't persisted until you commit the wizard — abandoning it leaves no orphan.
 6. **Run the agent** — on a PR diff. Demo: Anthropic **Haiku live**; **Sonnet baseline computed**. The
    agent posts findings + tokens to `/ci-runs` (the diff never leaves CI). For an offline demo, a mocked
    `/ci-runs` POST works too.
@@ -369,7 +377,7 @@ is fine for everything except the live agent call.
 |---|---|
 | Auth, recommender, catalog, ingestion #3, savings + quality gate, chat #4, observability, CI agent, metadata-only Jenkins + mint-once token | **Done** (backend v0.19.0, frontend v0.4.0) |
 | FE: login, dashboard + chat panel, recommender/project/Jenkins onboarding | **Done** (S15a/S15b/S15c) |
-| **Project lifecycle** — edit / re-pick, delete (FK cascade), discard-on-abandon, Jenkins URL validation | **[in progress]** (S15d, separate session — not merged) |
+| **Project lifecycle** — edit / re-pick (`PATCH`), delete (`DELETE`, FK cascade), defer-create (no orphan), Jenkins URL validation, CI-token regenerate (`/ci-setup/rotate`) | **Done** (S15d — backend v0.20.0, frontend v0.5.0) |
 | **e2e** — Playwright happy path + unified integration compose | **[planned]** (S17) |
 | **Infra** — Terraform (EKS, VPC, ECR, IRSA, S3 state) | **[planned]** — `modelmatch-infra` is a SHELL repo |
 | **GitOps** — Helm umbrella + ArgoCD, cert-manager, ingress, monitoring/logging | **[planned]** — `modelmatch-gitops` is a SHELL repo |

@@ -105,10 +105,11 @@ modelmatch-backend/
 
 ## Getting Started
 
-> **Status: built through S16** (backend **v0.19.0**) — recommender, catalog ingestion (#3), savings +
-> quality gate, grounded chat (#4), the CI agent, metadata-only Jenkins + mint-once token, and
-> observability are in. The LLM/blob/secret backends default to `fake` (offline, **zero tokens**);
-> real Bedrock/S3/Secrets backends activate with the infra stories.
+> **Status: built through S16 + S15d** (backend **v0.20.0**) — recommender, catalog ingestion (#3),
+> savings + quality gate, grounded chat (#4), the CI agent, metadata-only Jenkins + mint-once token,
+> observability, and project lifecycle (edit/delete cascade + CI-token rotation) are in. The
+> LLM/blob/secret backends default to `fake` (offline, **zero tokens**); real Bedrock/S3/Secrets
+> backends activate with the infra stories.
 
 Run Postgres in Docker and the backend on the host (hot reload). The one value you **must** change is
 `JWT_SECRET` — the placeholder in `.env.example` is rejected at startup (there is no built-in default).
@@ -162,7 +163,7 @@ All three LLM uses sit behind one `LLMClient` with a **fake client + recorded fi
 runs **offline at zero token cost** (Postgres must be up — `docker compose up -d db`).
 
 ```bash
-uv run pytest                         # full suite (~288 tests, fake LLM, offline)
+uv run pytest                         # full suite (~310 tests, fake LLM, offline)
 uv run pytest tests/test_savings.py   # a focused module
 
 # Live, GATED (spends real tokens — deliberate only)
@@ -196,9 +197,10 @@ graph LR
 
 ## Release History
 
-SemVer tags on `main`, one per merged story slice. Current: **v0.19.0** (S15c metadata-only Jenkins
-connection). Highlights: v0.18.0 observability (S16) · v0.16.0 catalog accuracy refresh (S5c) · v0.15.0
-grounded chat (S14b) · v0.13–v0.14 savings + quality gate + dashboard (S12–S14). Full log: `git tag`.
+SemVer tags on `main`, one per merged story slice. Current: **v0.20.0** (S15d project lifecycle —
+edit/delete cascade + CI-token rotation). Highlights: v0.19.0 metadata-only Jenkins (S15c) · v0.18.0
+observability (S16) · v0.16.0 catalog accuracy refresh (S5c) · v0.15.0 grounded chat (S14b) · v0.13–v0.14
+savings + quality gate + dashboard (S12–S14). Full log: `git tag`.
 
 - 0.0.1 — Initial scaffold (repo skeleton + stub entrypoint).
 
