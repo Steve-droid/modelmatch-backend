@@ -9,12 +9,34 @@ The LLM never runs here: this is plain SQL. The LLM only *fills* the catalog
 (S5b ingestion); ranking over it stays deterministic (S6).
 """
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models import Benchmark, BenchmarkResult, Harness, Model
 from app.schemas.catalog import CatalogRowIn, CatalogRowOut
+
+# Ranking/display cost is blended 3:1 (input:output) — a code-review workload reads a
+# large diff and emits compact findings. Quantized to the cost column's 6-dp scale.
+_BLEND_QUANT = Decimal("0.000001")
+
+
+def _ranking_cost(row: CatalogRowIn) -> Decimal | None:
+    """The deterministic ranking/display `cost_per_mtok` for a row.
+
+    When BOTH split prices are present we DERIVE it as `(3*input + output)/4` — the
+    same formula the seed documents — so seeded and ingested rows share one cost basis
+    and the LLM never does ranking arithmetic. Otherwise we fall back to the row's
+    provided blended `cost_per_mtok`.
+    """
+    if row.input_price_per_mtok is not None and row.output_price_per_mtok is not None:
+        blended = (
+            Decimal(3) * row.input_price_per_mtok + row.output_price_per_mtok
+        ) / Decimal(4)
+        return blended.quantize(_BLEND_QUANT, rounding=ROUND_HALF_UP)
+    return row.cost_per_mtok
 
 
 def get_or_create_model(db: Session, name: str, vendor: str) -> Model:
@@ -62,11 +84,13 @@ def upsert_catalog_row(
     (seed / `POST /benchmarks`, id=None) never clears an existing link.
     """
     model = get_or_create_model(db, row.model, row.vendor)
-    # Legacy blended price: kept as the recommender-ranking + catalog-display figure
-    # (NOT read by the S12 savings engine). Last-write-wins; the `!=` guard keeps an
-    # unchanged re-upsert (seed/ingestion idempotency) from dirtying the row.
-    if row.cost_per_mtok is not None and model.price_per_mtok != row.cost_per_mtok:
-        model.price_per_mtok = row.cost_per_mtok
+    # Ranking/display blended price (NOT read by the S12 savings engine). DERIVED from
+    # the split prices when present (never trusted from the LLM), so seed + ingested
+    # rows rank on the same basis. Last-write-wins; the `!=` guard keeps an unchanged
+    # re-upsert (seed/ingestion idempotency) from dirtying the row.
+    ranking_cost = _ranking_cost(row)
+    if ranking_cost is not None and model.price_per_mtok != ranking_cost:
+        model.price_per_mtok = ranking_cost
     # S12 split pricing (authoritative for savings): use the row's explicit input/output
     # prices when present; otherwise BACKFILL both from the legacy blended cost_per_mtok
     # so old/partial rows stay costable (input==output==blended reproduces the old math).
@@ -82,7 +106,7 @@ def upsert_catalog_row(
     mutable = {
         "task_type": row.task_type,
         "score": row.score,
-        "cost_per_mtok": row.cost_per_mtok,
+        "cost_per_mtok": ranking_cost,  # derived 3:1 blend, not the raw row value
         "context_window": row.context_window,
         "source": row.source,
         "measured_at": row.measured_at,

@@ -23,7 +23,7 @@ def _make_pick(client, headers) -> dict:
     """Create a recommendation; return its top option + baseline (the pick)."""
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "high"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "high"},
         headers=headers,
     ).json()
     top = body["shortlist"][0]
@@ -56,7 +56,7 @@ def test_create_project_persists_and_returns_enriched(client, db_session):
     assert body["selectedOptionId"] == pick["selected_option_id"]
     # enriched names resolved from the referenced rows
     assert body["selectedOptionModel"] == pick["selected_model"]
-    assert body["baselineModel"] == pick["baseline_model"]  # "Claude Sonnet 4.6"
+    assert body["baselineModel"] == pick["baseline_model"]  # "Claude Sonnet 4.5"
     assert body["baselineVendor"] == "Anthropic"
 
     # persisted + owner-scoped

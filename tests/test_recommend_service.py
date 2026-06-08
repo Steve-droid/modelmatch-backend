@@ -38,24 +38,24 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
 
     resp = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "high"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "high"},
         headers=headers,
     )
     assert resp.status_code == 201
     body = resp.json()
 
-    # ranked within the like-for-like group only
-    assert body["comparabilityGroup"]["benchmark"] == "SWE-bench Verified"
-    assert body["comparabilityGroup"]["metric"] == "pass@1_percent"
+    # ranked within the like-for-like CI-review group only (CodeReviewBench)
+    assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
+    assert body["comparabilityGroup"]["metric"] == "review_score_percent"
 
-    # cost-leaning: a cheap, decent model wins — Gemini 2.5 Flash (50 @ $0.30)
+    # cost-leaning: the cheap, near-best reviewer wins — Claude Haiku 4.5 (85.0 @ $1/$5)
     assert body["suggested"]["rank"] == 1
-    assert body["suggested"]["model"] == "Gemini 2.5 Flash"
+    assert body["suggested"]["model"] == "Claude Haiku 4.5"
 
     # baseline = the configured model NAME, found in-group, with its model identity
-    assert body["baseline"]["model"] == "Claude Sonnet 4.6"
+    assert body["baseline"]["model"] == "Claude Sonnet 4.5"
     assert body["baseline"]["selection"] == "configured"
-    assert float(body["baseline"]["costPerMtok"]) == 3.0
+    assert float(body["baseline"]["costPerMtok"]) == 6.0  # blended (3*3 + 15)/4
     assert body["baseline"]["vendor"] == "Anthropic"
     assert isinstance(body["baseline"]["modelId"], int)
 
@@ -69,18 +69,35 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
         assert "rankScore" in o and "benchmarkResultId" in o
 
 
-def test_low_sensitivity_shifts_to_higher_quality_model(client, db_session):
+def test_low_sensitivity_narrows_the_gap_to_quality_models(client, db_session):
+    """With the CodeReviewBench data, Claude Haiku 4.5 is both near-best and cheapest,
+    so it stays #1 across the slider (the product thesis: a cheap model is good enough).
+    What the slider DOES move is the spread: leaning to quality (low budget-sensitivity)
+    pulls the pricier, higher-quality runner-up much closer to the #1 pick than leaning
+    to cost (high sensitivity) does."""
     load_seed(db_session)
     headers = _auth_header(client)
 
-    resp = client.post(
-        "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "low"},
-        headers=headers,
-    )
-    assert resp.status_code == 201
-    # quality-leaning: the top-scoring model (GPT-5, 69.5) rises to #1
-    assert resp.json()["suggested"]["model"] == "GPT-5"
+    def pick(sensitivity: str) -> dict:
+        return client.post(
+            "/recommendations",
+            json={"taskTypes": ["ci_review"], "budgetSensitivity": sensitivity},
+            headers=headers,
+        ).json()
+
+    high = pick("high")  # cost-leaning
+    low = pick("low")    # quality-leaning
+
+    # Haiku wins regardless of the slider; the quality runner-up (Gemini 2.5 Pro) is #2.
+    assert high["suggested"]["model"] == "Claude Haiku 4.5"
+    assert low["suggested"]["model"] == "Claude Haiku 4.5"
+    assert low["shortlist"][1]["model"] == "Gemini 2.5 Pro"
+
+    def gap(body: dict) -> float:
+        return float(body["shortlist"][0]["rankScore"]) - float(body["shortlist"][1]["rankScore"])
+
+    # Quality-leaning narrows the #1→#2 gap (the higher-quality model catches up).
+    assert gap(low) < gap(high)
 
 
 def test_persists_profile_options_evidence(client, db_session):
@@ -89,7 +106,7 @@ def test_persists_profile_options_evidence(client, db_session):
 
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "medium"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "medium"},
         headers=headers,
     ).json()
 
@@ -97,7 +114,7 @@ def test_persists_profile_options_evidence(client, db_session):
     profiles = db_session.scalars(select(RequirementsProfile)).all()
     assert len(profiles) == 1
     assert profiles[0].id == body["profileId"]
-    assert profiles[0].task_types == ["agentic_coding"]
+    assert profiles[0].task_types == ["ci_review"]
     assert profiles[0].budget_sensitivity == "medium"
     assert profiles[0].user_id == user_id
 
@@ -122,7 +139,7 @@ def test_returned_option_ids_exist_and_belong_to_the_profile(client, db_session)
 
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "medium"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "medium"},
         headers=headers,
     ).json()
     profile_id = body["profileId"]
@@ -142,7 +159,7 @@ def test_recommendation_is_owned_by_creating_user_not_another(client, db_session
 
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "medium"},
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "medium"},
         headers=headers_a,  # created by Alice
     ).json()
 
@@ -154,7 +171,7 @@ def test_recommendation_is_owned_by_creating_user_not_another(client, db_session
 def test_same_request_is_deterministic(client, db_session):
     load_seed(db_session)
     headers = _auth_header(client)
-    payload = {"taskTypes": ["agentic_coding"], "budgetSensitivity": "high"}
+    payload = {"taskTypes": ["ci_review"], "budgetSensitivity": "high"}
 
     a = client.post("/recommendations", json=payload, headers=headers).json()
     b = client.post("/recommendations", json=payload, headers=headers).json()
@@ -169,12 +186,15 @@ def test_multiple_task_types_rank_within_dominant_group(client, db_session):
 
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["agentic_coding", "long_context"], "budgetSensitivity": "medium"},
+        json={"taskTypes": ["ci_review", "agentic_coding"], "budgetSensitivity": "medium"},
         headers=headers,
     ).json()
-    # agentic_coding (7 rows) dominates long_context (2 rows); we rank within it and
-    # never normalize a pass@1 row against an accuracy row.
-    assert body["comparabilityGroup"]["metric"] == "pass@1_percent"
+    # Both groups have 4 rows; the tie breaks deterministically to the lexicographically
+    # smaller (benchmark, metric) — ("CodeReviewBench", "review_score_percent") <
+    # ("SWE-bench Verified", "pass@1_percent") — so we rank within the CI-review group and
+    # never normalize a review_score row against a pass@1 row.
+    assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
+    assert body["comparabilityGroup"]["metric"] == "review_score_percent"
 
 
 def test_no_matching_task_types_is_422(client, db_session):

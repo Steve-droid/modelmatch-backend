@@ -32,7 +32,7 @@ from app.schemas.catalog import CatalogRowIn
 # Reuse the S11 CI test helpers (register → recommend → project → mint token).
 from tests.test_ci import _agent_result, _make_project, _mint_token, _register
 
-# Demo split prices (per MTok): Claude Haiku 4.5 vs Claude Sonnet 4.6 baseline.
+# Demo split prices (per MTok): Claude Haiku 4.5 vs Claude Sonnet 4.5 baseline.
 HAIKU = Pricing(Decimal("1.0"), Decimal("5.0"))
 SONNET = Pricing(Decimal("3.0"), Decimal("15.0"))
 
@@ -109,7 +109,7 @@ def test_compute_savings_unpriced_returns_none_trio(sel, base):
 
 def test_seed_populates_split_prices(db_session):
     load_seed(db_session)
-    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
+    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.5"))
     haiku = db_session.scalar(select(Model).where(Model.name == "Claude Haiku 4.5"))
     assert (sonnet.input_price_per_mtok, sonnet.output_price_per_mtok) == (
         Decimal("3.0"),
@@ -121,21 +121,28 @@ def test_seed_populates_split_prices(db_session):
     )
 
 
-def test_seed_records_deepswe_sonnet_provenance(db_session):
-    """Sonnet 4.6 (the demo baseline) carries a DeepSWE provenance row — real
-    benchmark metadata (score 32, sourced from deepswe.datacurve.ai), distinct from
-    its SWE-bench ranking anchor. Pricing stays the per-MTok $3/$15 (NOT DeepSWE's
-    $/task), which the split-price assertion above already pins."""
+def test_seed_records_nova2_lite_provenance_without_inventing_review_score(db_session):
+    """Nova 2 Lite is a real, priced, runtime-selectable model, but it has NO
+    CodeReviewBench code-review score — so we invent none. It carries exactly one
+    benchmark row: SWE-bench Verified (score 53.6, sourced from the Amazon Nova 2
+    technical report), in the agentic_coding group, NOT the ci_review group."""
     load_seed(db_session)
-    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
-    deepswe_rows = db_session.scalars(
+    nova = db_session.scalar(select(Model).where(Model.name == "Nova 2 Lite"))
+    rows = db_session.scalars(
         select(BenchmarkResult)
         .join(Benchmark, BenchmarkResult.benchmark_id == Benchmark.id)
-        .where(BenchmarkResult.model_id == sonnet.id, Benchmark.name == "DeepSWE")
+        .where(BenchmarkResult.model_id == nova.id)
     ).all()
-    assert len(deepswe_rows) == 1
-    assert deepswe_rows[0].score == Decimal("32.0")
-    assert "deepswe.datacurve.ai" in (deepswe_rows[0].source or "")
+    # exactly one row, and it is SWE-bench Verified — never a fabricated review score
+    assert len(rows) == 1
+    assert rows[0].task_type == "agentic_coding"
+    assert rows[0].score == Decimal("53.6")
+    assert "nova 2 technical report" in (rows[0].source or "").lower()
+    # Nova 2 Lite is priced (selectable as a CI runtime) — both split halves present.
+    assert nova.input_price_per_mtok == Decimal("0.3")
+    assert nova.output_price_per_mtok == Decimal("2.5")
+    # and it has NO CodeReviewBench / ci_review row (no invented code-review score)
+    assert all(r.benchmark.name != "CodeReviewBench" for r in rows)
 
 
 def test_upsert_backfills_split_from_blended_when_absent(db_session):
@@ -155,7 +162,7 @@ def test_upsert_backfills_split_from_blended_when_absent(db_session):
 
 def test_price_for_resolves_and_handles_missing(db_session):
     load_seed(db_session)
-    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.6"))
+    sonnet = db_session.scalar(select(Model).where(Model.name == "Claude Sonnet 4.5"))
     assert price_for(db_session, sonnet.id) == SONNET
     assert price_for(db_session, None) is None
     assert price_for(db_session, 999999) is None  # unknown id
