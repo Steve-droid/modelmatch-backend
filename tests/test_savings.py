@@ -121,11 +121,13 @@ def test_seed_populates_split_prices(db_session):
     )
 
 
-def test_seed_records_nova2_lite_provenance_without_inventing_review_score(db_session):
-    """Nova 2 Lite is a real, priced, runtime-selectable model, but it has NO
-    CodeReviewBench code-review score — so we invent none. It carries exactly one
-    benchmark row: SWE-bench Verified (score 53.6, sourced from the Amazon Nova 2
-    technical report), in the agentic_coding group, NOT the ci_review group."""
+def test_seed_nova2_lite_review_row_is_labeled_illustrative_not_cited(db_session):
+    """Nova 2 Lite carries two rows: its REAL SWE-bench Verified row (cited from the
+    Amazon Nova 2 report) and a DEMO CodeReviewBench row whose review score is synthetic
+    — added so the budget slider can steer the pick (high→Nova). Integrity guard: the
+    demo row's `source` (the only provenance that reaches the API/chat) MUST flag it as
+    illustrative, so it can never be mistaken for a cited benchmark result; the real
+    SWE-bench row must NOT carry that label."""
     load_seed(db_session)
     nova = db_session.scalar(select(Model).where(Model.name == "Nova 2 Lite"))
     rows = db_session.scalars(
@@ -133,16 +135,25 @@ def test_seed_records_nova2_lite_provenance_without_inventing_review_score(db_se
         .join(Benchmark, BenchmarkResult.benchmark_id == Benchmark.id)
         .where(BenchmarkResult.model_id == nova.id)
     ).all()
-    # exactly one row, and it is SWE-bench Verified — never a fabricated review score
-    assert len(rows) == 1
-    assert rows[0].task_type == "agentic_coding"
-    assert rows[0].score == Decimal("53.6")
-    assert "nova 2 technical report" in (rows[0].source or "").lower()
+    by_bench = {r.benchmark.name: r for r in rows}
+    assert set(by_bench) == {"SWE-bench Verified", "CodeReviewBench"}
+
+    # real, cited SWE-bench row — unchanged, and NOT marked illustrative
+    swe = by_bench["SWE-bench Verified"]
+    assert swe.task_type == "agentic_coding"
+    assert swe.score == Decimal("53.6")
+    assert "nova 2 technical report" in (swe.source or "").lower()
+    assert "illustrative" not in (swe.source or "").lower()
+
+    # demo CodeReviewBench row — synthetic score, explicitly flagged illustrative/demo
+    review = by_bench["CodeReviewBench"]
+    assert review.task_type == "ci_review"
+    assert review.score == Decimal("68.0")
+    assert "illustrative" in (review.source or "").lower()  # the honest-by-disclosure guard
+
     # Nova 2 Lite is priced (selectable as a CI runtime) — both split halves present.
     assert nova.input_price_per_mtok == Decimal("0.3")
     assert nova.output_price_per_mtok == Decimal("2.5")
-    # and it has NO CodeReviewBench / ci_review row (no invented code-review score)
-    assert all(r.benchmark.name != "CodeReviewBench" for r in rows)
 
 
 def test_upsert_backfills_split_from_blended_when_absent(db_session):
