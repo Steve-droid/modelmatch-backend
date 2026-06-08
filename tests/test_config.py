@@ -74,3 +74,35 @@ def test_default_secret_store_is_fake(monkeypatch):
     _ok_secret(monkeypatch)
     monkeypatch.delenv("SECRET_STORE", raising=False)
     assert Settings(_env_file=None).secret_store == "fake"
+
+
+# --- chat read-only role hardening (S14b) ----------------------------------
+
+@pytest.mark.parametrize("bad", ['ro"; DROP', "ro role", "1role", "a" * 64, ""])
+def test_chat_role_must_be_safe_identifier(monkeypatch, bad):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("CHAT_READONLY_DB_USER", bad)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_default_chat_password_allowed_with_fake_llm(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("LLM_CLIENT", "fake")  # dev/test → default role password is fine
+    monkeypatch.delenv("CHAT_READONLY_DB_PASSWORD", raising=False)
+    assert Settings(_env_file=None).chat_readonly_db_password == "modelmatch_chat_ro"
+
+
+def test_default_chat_password_rejected_with_real_bedrock(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("LLM_CLIENT", "bedrock")  # real in-cluster surface → must be real
+    monkeypatch.delenv("CHAT_READONLY_DB_PASSWORD", raising=False)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_real_chat_password_accepted_with_bedrock(monkeypatch):
+    _ok_secret(monkeypatch)
+    monkeypatch.setenv("LLM_CLIENT", "bedrock")
+    monkeypatch.setenv("CHAT_READONLY_DB_PASSWORD", "a-real-rotated-role-password")
+    assert Settings(_env_file=None).llm_client == "bedrock"
