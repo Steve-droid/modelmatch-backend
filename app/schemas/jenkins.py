@@ -1,12 +1,20 @@
-"""Jenkins connection schemas (S9). camelCase out.
+"""Jenkins connection schemas (S9, metadata-only since S15c). camelCase out.
 
-The request carries the *plaintext* Jenkins API token + BYOK model key as
-`SecretStr` — so they're masked in any repr/log/traceback — and the service hands
-them to the SecretStore, persisting only the returned refs. The response never
-echoes the plaintext: it exposes the refs + status only.
+The connection is now **metadata only**: just the base URL + job name. The provider
+key and the per-project CI token live in the *user's own Jenkins credentials*
+(`modelmatch-model-api-key`, `modelmatch-ci-token`) — the backend never reads them,
+so it no longer collects or stores them. The request therefore rejects any secret
+(`extra="forbid"`), and the response carries no secret refs at all.
 """
 
-from pydantic import AnyHttpUrl, Field, SecretStr, TypeAdapter, ValidationError, field_validator
+from pydantic import (
+    AnyHttpUrl,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 from app.schemas.base import CamelModel
 
@@ -16,10 +24,12 @@ _HTTP_URL = TypeAdapter(AnyHttpUrl)
 
 
 class JenkinsConnectionUpdate(CamelModel):
+    # Strictly metadata-only: a stray `jenkinsToken`/`modelApiKey` (or any other
+    # field) is a 422 — the backend must never be handed a provider secret again.
+    model_config = ConfigDict(extra="forbid")
+
     base_url: str = Field(max_length=1024)
     job_name: str = Field(min_length=1, max_length=255)
-    jenkins_token: SecretStr = Field(min_length=1)  # Jenkins API token (plaintext in)
-    model_api_key: SecretStr = Field(min_length=1)  # BYOK model key (plaintext in)
 
     @field_validator("base_url")
     @classmethod
@@ -36,5 +46,3 @@ class JenkinsConnectionOut(CamelModel):
     base_url: str
     job_name: str
     status: str
-    jenkins_token_ref: str  # secret-store reference, NOT the token
-    model_api_key_ref: str  # secret-store reference, NOT the key

@@ -45,28 +45,26 @@ tests/        (pytest + testcontainers; fake LLM + fixtures; gated test-llm-live
 - Config via `pydantic-settings` from env. Pydantic schemas, camelCase out. Errors 401/403/422/429/504.
 - `uv` packaging. Branching: `feature/<story-id>-<desc>`; never commit to `main`.
 
-Before asking Steve to approve a Story commit, Claude Code must run:
+Before asking Steve to approve a Story commit, Claude Code must:
 
-/pre-commit-scan /Users/steve/bootcamp/portfolio/modelmatch-backend
+1. Run the tests (focused area + full suite) and get them green on compose Postgres.
+2. Present the **"What I built in this slice"** summary and STOP for Steve's explicit approval.
 
-This command is a required pre-commit review gate, but it does not replace Steve’s approval.
-If it returns FAIL, fix the findings and rerun it.
-If it returns PASS, stop and wait for Steve’s explicit approval before committing, merging to main, tagging, or pushing.
+**Do NOT run `/pre-commit-scan`** — it has been removed from the workflow (2026-06-08): each run took
+~10 min and it surfaced no meaningful logical bugs, while **Steve reviews with Codex** (faster, catches
+more). Steve runs any review he wants **manually**; Claude does not invoke a review agent. Only
+commit / merge / tag / push after Steve's explicit approval.
 
-The flow should be:
+The flow:
 
 ```
 Implement story
    |
-Run tests
+Run tests  ->  not green? fix
    |
-Run /pre-commit-scan
+Show Steve the "What I built in this slice" summary
    |
-PASS? no -> fix and rerun
-   |
-PASS? yes -> show Steve summary
-   |
-Steve explicitly approves
+Steve reviews (Codex, manual) + explicitly approves
    |
 commit / merge / tag / push
 ```

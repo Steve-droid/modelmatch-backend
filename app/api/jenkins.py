@@ -1,7 +1,9 @@
-"""Jenkins connection routes (S9): connect (BYOK) + view status. Owner-scoped.
+"""Jenkins connection routes (S9; metadata-only since S15c). Owner-scoped.
 
-Secrets go in as plaintext and are stored as refs (see jenkins_service); the
-response exposes refs + status only. The CI-setup snippet + run-ingest land in S11.
+The connection carries metadata only (base URL + job name); the provider key + CI
+token live in the user's own Jenkins credentials, so nothing secret is accepted or
+stored here. The response exposes status + metadata. CI-setup snippet + run-ingest
+land in S11.
 """
 
 from fastapi import APIRouter, Depends
