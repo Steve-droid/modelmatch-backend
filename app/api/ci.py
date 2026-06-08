@@ -26,6 +26,16 @@ def get_ci_setup(
     return service.ci_setup(db, project_id, current_user)
 
 
+@router.post("/{project_id}/ci-setup/rotate", response_model=CiSetupOut)
+def rotate_ci_token(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CiSetupOut:
+    # Recovery for a lost mint-once token: issues a fresh one (the old one stops working).
+    return service.rotate_ci_token(db, project_id, current_user)
+
+
 @router.post(
     "/{project_id}/ci-runs",
     response_model=CiRunOut,

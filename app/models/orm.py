@@ -214,7 +214,9 @@ class JenkinsConnection(Base):
     __tablename__ = "jenkins_connection"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("project.id"), unique=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("project.id", ondelete="CASCADE"), unique=True
+    )
     base_url: Mapped[Optional[str]] = mapped_column(String(1024))
     job_name: Mapped[Optional[str]] = mapped_column(String(255))
     # secret-store references, NEVER plaintext (comments mirror the migration).
@@ -248,7 +250,7 @@ class CiRun(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("project.id"))
+    project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     jenkins_build_id: Mapped[Optional[str]] = mapped_column(String(255))
     model_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model.id"))
     task: Mapped[str] = mapped_column(String(32), server_default="code_review")
@@ -281,7 +283,7 @@ class CiFinding(Base):
     __tablename__ = "ci_finding"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ci_run_id: Mapped[int] = mapped_column(ForeignKey("ci_run.id"))
+    ci_run_id: Mapped[int] = mapped_column(ForeignKey("ci_run.id", ondelete="CASCADE"))
     severity: Mapped[Optional[str]] = mapped_column(String(32))
     category: Mapped[Optional[str]] = mapped_column(FINDING_CATEGORY)
     file: Mapped[Optional[str]] = mapped_column(String(1024))
@@ -307,7 +309,7 @@ class FindingFeedback(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ci_finding_id: Mapped[int] = mapped_column(ForeignKey("ci_finding.id"))
+    ci_finding_id: Mapped[int] = mapped_column(ForeignKey("ci_finding.id", ondelete="CASCADE"))
     verdict: Mapped[str] = mapped_column(FEEDBACK_VERDICT)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("user.id"))
 
@@ -318,7 +320,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_message"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("project.id"))
+    project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     role: Mapped[str] = mapped_column(CHAT_ROLE)
     text: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[Optional[datetime]] = mapped_column(
@@ -332,7 +334,9 @@ class RetrievalTrace(Base):
     __tablename__ = "retrieval_trace"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    chat_message_id: Mapped[int] = mapped_column(ForeignKey("chat_message.id"))
+    chat_message_id: Mapped[int] = mapped_column(
+        ForeignKey("chat_message.id", ondelete="CASCADE")
+    )
     kind: Mapped[str] = mapped_column(TRACE_KIND)
     ref: Mapped[Optional[str]] = mapped_column(String(255))
     snippet: Mapped[Optional[str]] = mapped_column(Text)
@@ -344,7 +348,9 @@ class LlmCall(Base):
     __tablename__ = "llm_call"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ci_run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ci_run.id"))
+    ci_run_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("ci_run.id", ondelete="CASCADE")
+    )
     purpose: Mapped[str] = mapped_column(LLM_PURPOSE)
     model_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model.id"))
     tokens_in: Mapped[Optional[int]] = mapped_column(Integer)
@@ -357,7 +363,7 @@ class ProactiveAlert(Base):
     __tablename__ = "proactive_alert"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    project_id: Mapped[int] = mapped_column(ForeignKey("project.id"))
+    project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(ALERT_KIND)
     reason: Mapped[Optional[str]] = mapped_column(Text)
     evidence: Mapped[Optional[dict]] = mapped_column(JSONB)
