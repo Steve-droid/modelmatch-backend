@@ -4,10 +4,11 @@ Only the S1 (platform-shell) settings live here. Later stories add JWT, baseline
 quality knobs, AWS/Bedrock/S3, and the LLM seam — see .env.example for the full set.
 """
 
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Values that must never be accepted as a real JWT signing key.
@@ -17,6 +18,20 @@ _PLACEHOLDER_SECRETS = {
     "secret",
     "dev-only-insecure-secret-change-me",
 }
+
+# Chat read-only role password values that are fine for dev/test (fake LLM) but must
+# NOT be used once the in-cluster LLM is real (Bedrock) — the role gates DB access.
+_PLACEHOLDER_CHAT_PASSWORDS = {
+    "modelmatch_chat_ro",  # the dev/test default
+    "change-me-in-env",
+    "changeme",
+    "secret",
+    "password",
+}
+
+# A safe SQL identifier (the role name is interpolated into role-management DDL in the
+# chat-role migration, so it must not be attacker-controllable text).
+_SQL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 class Settings(BaseSettings):
@@ -107,6 +122,40 @@ class Settings(BaseSettings):
     llm_hourly_token_cap: int = Field(default=200_000, ge=1)
     ingest_max_tokens: int = Field(default=2048, ge=1)
 
+    # Grounded Q&A chat (S14b, #4). The chat's LLM-generated catalog SQL runs on a
+    # SEPARATE connection authenticating as a restricted read-only role that can
+    # SELECT only the curated `chat_catalog` view — the DB-level half of the safety
+    # story behind the app-level SELECT-only gate (it cannot write, and cannot read
+    # `user`/`jenkins_connection` secret refs even if the gate is bypassed). The role
+    # + view are provisioned by a migration; the password is env-driven (dev/test
+    # default mirrors the inline creds in `database_url`, never a real secret).
+    chat_readonly_db_user: str = "modelmatch_chat_ro"
+    chat_readonly_db_password: str = "modelmatch_chat_ro"
+    chat_max_tokens: int = Field(default=1024, ge=1)  # per LLM call (SQL-gen / answer)
+    chat_max_rows: int = Field(default=200, ge=1)      # LIMIT injected into catalog SQL
+    chat_retry_max: int = Field(default=1, ge=0)       # DB-error retries for SQL-gen
+    # Expose the answer's debug block (generated SQL, attempts, token counts) on the
+    # chat response. OFF by default — raw SQL/internals are NOT shown to normal users
+    # (there is no admin role yet, S4). Turn on only in dev/test (CHAT_DEBUG_ENABLED=
+    # true). Even when on, debug carries no secrets/refs/raw DB errors (see api/chat).
+    chat_debug_enabled: bool = False
+
+    @property
+    def chat_database_url(self) -> str:
+        """The read-only chat DSN: the app database, but authenticating as the
+        restricted `chat_readonly_db_user` role (same host/port/db as `database_url`,
+        creds swapped). Derived so it can never drift to a different database."""
+        from sqlalchemy.engine import make_url
+
+        return (
+            make_url(self.database_url)
+            .set(
+                username=self.chat_readonly_db_user,
+                password=self.chat_readonly_db_password,
+            )
+            .render_as_string(hide_password=False)
+        )
+
     @field_validator("llm_client")
     @classmethod
     def _validate_incluster_provider(cls, v: str) -> str:
@@ -135,6 +184,33 @@ class Settings(BaseSettings):
                 f"(got {v!r}); 'fake' and unknown providers are not allowed."
             )
         return norm
+
+    @field_validator("chat_readonly_db_user")
+    @classmethod
+    def _validate_chat_role_identifier(cls, v: str) -> str:
+        # The chat-role migration interpolates this into CREATE/ALTER/GRANT ROLE DDL,
+        # so it must be a plain SQL identifier (no quotes, spaces, or injection text).
+        if not _SQL_IDENTIFIER.fullmatch(v) or len(v) > 63:
+            raise ValueError(
+                "CHAT_READONLY_DB_USER must be a safe SQL identifier "
+                "(letter/underscore start, then letters/digits/underscore, ≤ 63 chars)."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _require_real_chat_password_when_not_fake(self) -> "Settings":
+        # Dev/test runs on the fake in-cluster client and may keep the default role
+        # password. Once the in-cluster LLM is real (Bedrock), the read-only role is a
+        # live DB credential — a default/placeholder password is rejected, like JWT.
+        if (
+            self.llm_client != "fake"
+            and self.chat_readonly_db_password in _PLACEHOLDER_CHAT_PASSWORDS
+        ):
+            raise ValueError(
+                "CHAT_READONLY_DB_PASSWORD must be a real, non-default value when "
+                "LLM_CLIENT is not 'fake' (the read-only role is a live DB credential)."
+            )
+        return self
 
     @field_validator("jwt_secret")
     @classmethod

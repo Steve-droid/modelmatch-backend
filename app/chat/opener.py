@@ -1,0 +1,114 @@
+"""The deterministic "explain my spend" opener + savings grounding (S14b).
+
+The chat's first assistant message — and the grounding for every spend/savings/quality
+question — comes from the S14 savings aggregate, NOT from the LLM. These are pure
+functions over the `SavingsResponse` DTO (no DB, no model call, $0, fully testable):
+
+- `format_savings_snapshot` → a compact, factual block injected into both LLM prompts
+  as the authoritative spend figures (the model may cite these but never invent them).
+- `build_opener` → the friendly plain-language opening summary the user sees first.
+- `savings_trace` → the single `retrieval_trace` row (kind='savings') recording which
+  figures grounded a savings answer.
+
+Product framing: the model these figures describe runs as a CI **code-review agent**
+that flags security risks AND coding-style bad practices in PR diffs — not a
+"summarize the changes" tool. The opener says so.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+from app.schemas.savings import SavingsResponse
+
+_SAVINGS_REF = "savings:project"
+
+
+def _money(value: Decimal | None) -> str:
+    """USD with 4 dp (the demo's per-run costs are sub-cent); '—' when unknown."""
+    if value is None:
+        return "—"
+    return f"${value:.4f}"
+
+
+def _pct(value: float | None) -> str:
+    return "—" if value is None else f"{value:.0f}%"
+
+
+def format_savings_snapshot(savings: SavingsResponse) -> str:
+    """The authoritative spend figures, as a compact block for the LLM to ground on.
+
+    Only figures the S14 engine computed — the model answers spend questions from
+    these or says it doesn't have the data. Never invent or recompute."""
+    k = savings.kpis
+    selected = savings.selected_model or "the selected model"
+    baseline = savings.baseline_model or "the baseline"
+    rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate:.0f}%"
+    lines = [
+        "Spend summary (authoritative — computed by ModelMatch, not by you):",
+        f"- Selected model (runs the CI review agent): {selected}",
+        f"- Baseline model (the expensive default, costed but not run): {baseline}",
+        f"- CI runs in range: {k.runs_count} "
+        f"(banked {k.banked_runs}, quality-risk {k.quality_risk_runs}, "
+        f"unrated {k.unrated_runs})",
+        f"- Cumulative saved vs baseline (quality-passing runs only): "
+        f"{_money(k.cumulative_saved)}"
+        + (f" ({_pct(k.saved_pct)} of baseline)" if k.saved_pct is not None else ""),
+        f"- Spend this period (actual): {_money(k.spend_this_period)}",
+        f"- Savings at quality risk (excluded from the headline): {_money(k.quality_risk)}",
+        f"- Finding acceptance rate: {rate} "
+        f"(quality threshold {k.threshold * 100:.0f}%, status: {k.quality_status})",
+    ]
+    if k.projected_monthly_savings is not None:
+        lines.append(
+            f"- Projected monthly savings (linear): {_money(k.projected_monthly_savings)}"
+        )
+    return "\n".join(lines)
+
+
+def build_opener(savings: SavingsResponse) -> str:
+    """The deterministic opening 'explain my spend' message (plain language)."""
+    k = savings.kpis
+    if k.runs_count == 0:
+        return (
+            "Hi! I'm your ModelMatch assistant. Once your Jenkins pipeline runs the "
+            "CI code-review agent (it flags security risks and coding-style issues in "
+            "your PR diffs), I'll explain your spend here — how much the recommended "
+            "model is saving you versus the baseline, and whether review quality is "
+            "holding up. No runs yet, so there's nothing to total. Ask me about the "
+            "model catalog any time."
+        )
+
+    selected = savings.selected_model or "your selected model"
+    baseline = savings.baseline_model or "the baseline"
+    saved = _money(k.cumulative_saved)
+    pct = f" ({_pct(k.saved_pct)} of what {baseline} would have cost)" if k.saved_pct is not None else ""
+
+    if k.quality_status == "banking":
+        quality_line = (
+            f"Review quality is holding — finding acceptance is {_pct(k.acceptance_rate)}, "
+            f"at or above your {k.threshold * 100:.0f}% threshold — so those savings count."
+        )
+    elif k.quality_status == "quality_risk":
+        quality_line = (
+            f"Heads up: finding acceptance is {_pct(k.acceptance_rate)}, below your "
+            f"{k.threshold * 100:.0f}% threshold, so {_money(k.quality_risk)} of savings is "
+            "flagged as quality risk and kept out of the headline."
+        )
+    else:
+        quality_line = (
+            "No findings have been rated yet, so nothing is banked toward the headline "
+            "until review quality is confirmed."
+        )
+
+    return (
+        f"Here's your spend so far. Across {k.runs_count} CI run(s), {selected} has "
+        f"reviewed your PR diffs (security + coding-style) for {_money(k.spend_this_period)}, "
+        f"versus running {baseline} — saving you {saved}{pct}. {quality_line} "
+        "Ask me anything about these numbers, the quality, or the model catalog."
+    )
+
+
+def savings_trace(savings: SavingsResponse) -> tuple[str, str]:
+    """The (ref, snippet) for the kind='savings' retrieval-trace row of an answer."""
+    return _SAVINGS_REF, format_savings_snapshot(savings)

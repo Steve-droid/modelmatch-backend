@@ -15,6 +15,7 @@ from app import __version__
 from app.api import (
     auth,
     benchmarks,
+    chat,
     ci,
     findings,
     jenkins,
@@ -45,6 +46,7 @@ app.include_router(jenkins.router)
 app.include_router(ci.router)
 app.include_router(findings.router)
 app.include_router(savings.router)
+app.include_router(chat.router)
 
 
 @app.get("/")
