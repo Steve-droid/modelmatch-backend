@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_owner
-from app.models import Model, Project, RecommendationOption, User
-from app.schemas.project import ProjectCreate, ProjectOut
+from app.models import JenkinsConnection, Model, Project, RecommendationOption, User
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 
 
 def _not_found(what: str) -> HTTPException:
@@ -25,6 +25,12 @@ def _to_out(db: Session, project: Project) -> ProjectOut:
     option = db.get(RecommendationOption, project.selected_option_id)
     selected_model = db.get(Model, option.model_id) if option else None
     baseline = db.get(Model, project.baseline_model_id)
+    # Onboarded only once the Jenkins connection exists with a minted CI token (the
+    # user finished /ci-setup). Anything short of that is "setup incomplete" (S15d).
+    conn = db.scalar(
+        select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+    )
+    setup_complete = conn is not None and conn.ci_token_hash is not None
     return ProjectOut(
         id=project.id,
         name=project.name,
@@ -34,6 +40,7 @@ def _to_out(db: Session, project: Project) -> ProjectOut:
         baseline_model_id=project.baseline_model_id,
         baseline_model=baseline.name if baseline else "",
         baseline_vendor=baseline.vendor if baseline else "",
+        setup_complete=setup_complete,
     )
 
 
@@ -75,3 +82,49 @@ def get_project(db: Session, project_id: int, current_user: User) -> ProjectOut:
         raise _not_found("Project")
     require_owner(project.user_id, current_user)  # 403 if not the caller's
     return _to_out(db, project)
+
+
+def update_project(
+    db: Session, project_id: int, payload: ProjectUpdate, current_user: User
+) -> ProjectOut:
+    """Partial edit (S15d): rename and/or re-pick. Same validation as create —
+    a new option must exist AND belong to the caller (403 otherwise); a new
+    baseline must be a real model. Omitted fields are left untouched."""
+    project = db.get(Project, project_id)
+    if project is None:
+        raise _not_found("Project")
+    require_owner(project.user_id, current_user)  # 403 if not the caller's
+
+    data = payload.model_dump(exclude_unset=True)
+
+    if "selected_option_id" in data:
+        option = db.get(RecommendationOption, data["selected_option_id"])
+        if option is None:
+            raise _not_found("Recommendation option")
+        require_owner(option.profile.user_id, current_user)  # only your own option
+        project.selected_option_id = data["selected_option_id"]
+
+    if "baseline_model_id" in data:
+        if db.get(Model, data["baseline_model_id"]) is None:
+            raise _not_found("Baseline model")
+        project.baseline_model_id = data["baseline_model_id"]
+
+    if "name" in data:
+        project.name = data["name"]
+
+    db.commit()
+    db.refresh(project)
+    return _to_out(db, project)
+
+
+def delete_project(db: Session, project_id: int, current_user: User) -> None:
+    """Delete a project + its whole subtree (S15d). The FK cascade
+    (migration b1c2d3e4f5a6) removes the Jenkins connection, CI runs/findings/
+    feedback, llm_call rows, chat messages/traces and alerts in the DB, so this is a
+    single owner-scoped delete."""
+    project = db.get(Project, project_id)
+    if project is None:
+        raise _not_found("Project")
+    require_owner(project.user_id, current_user)  # 403 if not the caller's
+    db.delete(project)
+    db.commit()
