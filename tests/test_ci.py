@@ -55,13 +55,13 @@ def _make_project(client, headers) -> int:
 
 
 def _connect_jenkins(client, headers, pid: int) -> None:
+    # Metadata-only connection (S15c): no secrets — the key + CI token live in the
+    # user's Jenkins credentials. ci-setup still mints the per-project token from this.
     client.put(
         f"/projects/{pid}/jenkins",
         json={
             "baseUrl": "http://jenkins.example.com:8080",
             "jobName": "modelmatch-review",
-            "jenkinsToken": "jenkins-api-token-abc",
-            "modelApiKey": "sk-byok-key-xyz",
         },
         headers=headers,
     )
@@ -141,6 +141,28 @@ def test_ci_setup_hash_in_db_not_plaintext(client, db_session):
     assert conn.ci_token_hash != token  # never the plaintext
     all_values = " ".join(str(getattr(conn, c.name)) for c in conn.__table__.columns)
     assert token not in all_values
+
+
+def test_ci_setup_mints_from_metadata_only_connection(client, db_session):
+    """S15c: a connection created from metadata alone (no secret refs) is enough to
+    mint the per-project CI token — no stored Jenkins/model secret is needed."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_meta@example.com")
+    pid = _make_project(client, headers)
+    _connect_jenkins(client, headers, pid)  # metadata only
+
+    conn = db_session.scalar(
+        select(JenkinsConnection).where(JenkinsConnection.project_id == pid)
+    )
+    assert conn.jenkins_token_ref is None and conn.model_api_key_ref is None
+    assert conn.ci_token_hash is None  # not minted yet
+
+    resp = client.get(f"/projects/{pid}/ci-setup", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["token"]  # token minted despite no stored secrets
+
+    db_session.expire(conn)
+    assert conn.ci_token_hash is not None  # only the hash persisted
 
 
 def test_ci_setup_requires_jenkins_connection(client, db_session):
@@ -454,6 +476,8 @@ def test_ingest_rejects_raw_diff_field_and_never_stores_it(client, db_session):
     body = {**_agent_result("with-diff"), "diff": "diff --git a/secret.py b/secret.py\n+API_KEY='sk-leak'"}
     resp = client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token})
     assert resp.status_code == 422  # extra='forbid' rejects it
+    # The 422 must not echo the rejected diff back either (handler strips `input`).
+    assert "diff --git" not in resp.text and "sk-leak" not in resp.text
 
     # Nothing was persisted, and no diff content leaked into any ci_run/ci_finding column.
     assert db_session.scalar(select(func.count()).select_from(CiRun).where(CiRun.project_id == pid)) == 0
