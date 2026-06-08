@@ -591,6 +591,48 @@ def test_prompt_injection_forbidden_sql_is_blocked_cleanly(client, chat_engine, 
     assert all("password" not in (t or "").lower() for t in texts)
 
 
+def test_post_chat_off_topic_is_refused_without_answer_gen(client, chat_engine, db_session):
+    """Deterministic ($0) mirror of the @live off-topic test: LLM #1 emits the refusal
+    token → the turn is refused with NO second (answer-gen) call, nothing grounded, and
+    an honest assistant message persisted. Pins the refusal short-circuit without spending
+    real tokens (the @live version exercises the same path against the real model)."""
+    from app.api.chat import get_chat_engine, get_chat_llm_client
+    from app.main import app
+
+    fake = FakeLLMClient(REFUSAL_TOKEN)  # LLM #1 refuses; repeats if wrongly called again
+    app.dependency_overrides[get_chat_llm_client] = lambda: fake
+    app.dependency_overrides[get_chat_engine] = lambda: chat_engine
+    try:
+        load_seed(db_session)
+        headers, _ = _register(client, db_session, "chat_offtopic@example.com")
+        pid = _make_project(client, headers)
+        resp = client.post(
+            f"/projects/{pid}/chat",
+            json={"question": "What's the weather in Tel Aviv?"},
+            headers=headers,
+        )
+    finally:
+        app.dependency_overrides.pop(get_chat_llm_client, None)
+        app.dependency_overrides.pop(get_chat_engine, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["refused"] is True and body["ok"] is False
+    assert body["retrievalTrace"] == []      # off-topic → nothing retrieved/grounded
+    assert body["debug"] is None
+    assert fake._i == 1                       # LLM #1 refused → NO answer-gen call (no spend)
+
+    # the turn is still persisted honestly: the question + a non-empty refusal answer
+    msgs = db_session.scalars(
+        select(ChatMessage).where(ChatMessage.project_id == pid).order_by(ChatMessage.id)
+    ).all()
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[-1].text
+    assert db_session.scalar(
+        select(func.count()).select_from(LlmCall).where(LlmCall.purpose == "chat")
+    ) == 1
+
+
 # ===========================================================================
 # LIVE Bedrock Nova — grounding / retrieval / refusal (Steve's directive, ≤~10 calls)
 # ===========================================================================

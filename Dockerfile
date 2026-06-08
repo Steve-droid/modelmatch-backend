@@ -17,6 +17,11 @@ FROM python:3.12-slim AS runtime
 RUN useradd --create-home --uid 10001 appuser
 WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app /app
+# Ship the Alembic migrations + config IN the image so the SAME image runs the schema
+# step — a one-off `alembic upgrade head` (the K8s migrate-Job / the compose `migrate`
+# service), never on serve-startup. CMD below stays gunicorn-only.
+COPY --chown=appuser:appuser migrations ./migrations
+COPY --chown=appuser:appuser alembic.ini ./
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
 EXPOSE 8000

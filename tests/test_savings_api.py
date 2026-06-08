@@ -117,6 +117,15 @@ def test_assemble_no_projection_under_one_day():
     assert dto.kpis.projected_monthly_savings is None
 
 
+def test_assemble_projection_scales_for_partial_month():
+    # Golden for the scaling factor itself (the 30-day case is exactly ×1 and hides it):
+    # one banked run 15 days ago → span 15d → amount / 15 * 30 = amount × 2.
+    rec = _rec(1, savings="3.0", quality_ok=True, actual="1.0", baseline="4.0", days_ago=15)
+    dto = assemble([rec], THRESHOLD, _NOW)
+    assert dto.kpis.projected_monthly_spend == Decimal("2.000000")    # 1.0 / 15 * 30
+    assert dto.kpis.projected_monthly_savings == Decimal("6.000000")  # 3.0 / 15 * 30
+
+
 def test_assemble_empty_is_all_zero():
     dto = assemble([], THRESHOLD, _NOW)
     assert dto.kpis.cumulative_saved == Decimal("0")
