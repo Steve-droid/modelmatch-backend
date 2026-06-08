@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 
 from agent.config import AgentConfig
@@ -40,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent", description="ModelMatch CI code-review agent")
     parser.add_argument("--diff", help="path to a unified diff (default: stdin)")
     args = parser.parse_args(argv)
+
+    # The S16 LLM log line goes to STDERR — stdout is reserved for the result JSON the
+    # Jenkins stage parses. INFO so the per-request line is emitted.
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
 
     try:
         config = AgentConfig()

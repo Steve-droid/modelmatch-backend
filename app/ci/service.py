@@ -30,6 +30,8 @@ from app.models import (
     RecommendationOption,
     User,
 )
+from app.observability import LLMObservation
+from app.observability.metrics import record_llm_metrics
 from app.savings.service import compute_savings, price_for
 from app.schemas.ci import CiRunIngest, CiRunOut, CiSetupOut
 
@@ -261,6 +263,21 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
         )
     db.commit()
     db.refresh(run)
+
+    # Observability (S16): fold the AGENT's token usage into the backend's /metrics
+    # under purpose="agent". The agent runs in the user's CI (no scrape there), so its
+    # tokens reach our Prometheus only via this ingest. Metrics ONLY — /ci-runs stays
+    # deterministic: no LLM call, no diff, no token-cap, and no misleading log line.
+    # `model` is the agent-reported provider model string; provider is BYOK (unknown).
+    record_llm_metrics(
+        LLMObservation(
+            purpose="agent",
+            model=payload.model,
+            tokens_in=payload.tokens_in,
+            tokens_out=payload.tokens_out,
+            status="ok",
+        )
+    )
 
     return CiRunOut(
         id=run.id,

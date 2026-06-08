@@ -10,11 +10,13 @@ user's key.
 from __future__ import annotations
 
 import json
+import time
 
 from pydantic import ValidationError
 
 from agent.config import AgentConfig
 from app.llm.base import LLMClient, approx_tokens
+from app.observability import LLMObservation, log_llm_call
 from app.schemas.findings import AgentResult, Finding
 
 SYSTEM_PROMPT = (
@@ -87,9 +89,39 @@ def apply_gate(
     return "pass", None
 
 
+def _log_agent_call(
+    *,
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    provider: str,
+    latency_ms: int | None = None,
+    status: str = "ok",
+    error_kind: str | None = None,
+) -> None:
+    """One per-request LLM log line for the agent. The diff is NEVER logged: prompt/query
+    stay None — only provider/model/tokens/latency/status are emitted. Logging only — no
+    metrics: the agent runs once in the user's CI and has no /metrics endpoint (the
+    backend folds agent tokens into /metrics from the /ci-runs ingest instead)."""
+    log_llm_call(
+        LLMObservation(
+            purpose="agent",
+            provider=provider,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+            retrieved_context_size=None,
+            status=status,
+            error_kind=error_kind,
+        )
+    )
+
+
 def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentResult:
     """Run one review pass and return the result. Read-only; no filesystem writes."""
     user_prompt = build_user_prompt(diff)
+    provider = config.llm_client
 
     # Preflight: estimate worst-case usage (prompt in + max output) and abort BEFORE
     # calling the provider, so an oversized diff never spends on the user's key.
@@ -97,21 +129,56 @@ def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentResult:
         approx_tokens(SYSTEM_PROMPT) + approx_tokens(user_prompt) + config.max_tokens
     )
     if estimated > config.token_ceiling:
+        _log_agent_call(
+            model=config.model_id, tokens_in=0, tokens_out=0, provider=provider,
+            status="error", error_kind="TokenCeilingExceeded",
+        )
         raise TokenCeilingExceeded(
             f"estimated {estimated} tokens exceeds ceiling {config.token_ceiling} "
             "(aborted before the provider call)"
         )
 
-    resp = client.complete(SYSTEM_PROMPT, user_prompt, config.max_tokens)
+    try:
+        started = time.perf_counter()
+        resp = client.complete(SYSTEM_PROMPT, user_prompt, config.max_tokens)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+    except Exception as exc:
+        # Provider/client failure — log the exception CLASS only (never its message,
+        # which could carry prompt/diff/secret text), then let __main__ map it to an exit.
+        _log_agent_call(
+            model=config.model_id, tokens_in=0, tokens_out=0, provider=provider,
+            status="error", error_kind=type(exc).__name__,
+        )
+        raise
 
     # Post-call: enforce against actual usage too.
     used = resp.tokens_in + resp.tokens_out
     if used > config.token_ceiling:
+        _log_agent_call(
+            model=resp.model, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
+            provider=provider, latency_ms=latency_ms,
+            status="error", error_kind="TokenCeilingExceeded",
+        )
         raise TokenCeilingExceeded(
             f"run used {used} tokens, ceiling is {config.token_ceiling}"
         )
 
-    findings = parse_findings(resp.text)
+    try:
+        findings = parse_findings(resp.text)
+    except MalformedFindings:
+        _log_agent_call(
+            model=resp.model, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
+            provider=provider, latency_ms=latency_ms,
+            status="error", error_kind="MalformedFindings",
+        )
+        raise
+
+    # Success: the provider call worked and its output parsed.
+    _log_agent_call(
+        model=resp.model, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
+        provider=provider, latency_ms=latency_ms, status="ok",
+    )
+
     gate, reason = apply_gate(findings, config.fail_severities)
     return AgentResult(
         findings=findings,

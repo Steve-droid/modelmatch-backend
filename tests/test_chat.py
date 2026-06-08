@@ -392,6 +392,100 @@ def test_post_chat_persists_turn_and_logs_llm_call(http, db_session):
     assert calls[0].ci_run_id is None and (calls[0].tokens_in or 0) > 0
 
 
+def test_post_chat_emits_llm_log_line_with_question_redacted(http, db_session, caplog):
+    """S16: a chat turn emits one per-request LLM log line (purpose=chat). The question
+    appears only as derived metadata — a secret pasted into it never leaks raw."""
+    import json
+    import logging
+
+    cl, _ = http
+    load_seed(db_session)
+    headers, _ = _register(cl, db_session, "chat_log@example.com")
+    pid = _make_project(cl, headers)
+
+    question = "How much have I saved with key sk-ant-api03-CHATSECRET123456?"
+    with caplog.at_level(logging.INFO, logger="modelmatch.llm"):
+        cl.post(f"/projects/{pid}/chat", json={"question": question}, headers=headers)
+
+    lines = [r.getMessage() for r in caplog.records if r.name == "modelmatch.llm"]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["purpose"] == "chat" and rec["status"] == "ok"
+    assert rec["provider"] == "fake"                     # S16 pushback #4
+    assert rec["retrieved_context_size"] == 0            # NO_QUERY route — no catalog rows
+    assert rec["tokens_in"] > 0
+    # the question is metadata only — the secret (and the raw question) never appear
+    assert "sk-ant-api03-CHATSECRET123456" not in lines[0]
+    assert "How much have I saved" not in lines[0]
+    assert rec["prompt_redactions"] >= 1                 # the key was counted, not logged
+
+
+def test_post_chat_provider_error_logs_error_without_message(client, chat_engine, db_session, caplog):
+    """S16: a provider failure mid-chat emits a status=error line (exception class only,
+    no message), and no raw question/secret/provider-error text is logged."""
+    import json
+    import logging
+
+    from app.api.chat import get_chat_engine, get_chat_llm_client
+    from app.main import app
+
+    class _Raising:
+        def complete(self, system, user, max_tokens):
+            raise RuntimeError("nova exploded dev@secret.com")
+
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "chat_err@example.com")
+    pid = _make_project(client, headers)
+    app.dependency_overrides[get_chat_llm_client] = lambda: _Raising()
+    app.dependency_overrides[get_chat_engine] = lambda: chat_engine
+    try:
+        with caplog.at_level(logging.INFO, logger="modelmatch.llm"):
+            with pytest.raises(RuntimeError):
+                client.post(
+                    f"/projects/{pid}/chat",
+                    json={"question": "what models are cheapest? sk-ant-CHATERR123456789"},
+                    headers=headers,
+                )
+    finally:
+        app.dependency_overrides.pop(get_chat_llm_client, None)
+        app.dependency_overrides.pop(get_chat_engine, None)
+
+    lines = [r.getMessage() for r in caplog.records if r.name == "modelmatch.llm"]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["purpose"] == "chat" and rec["status"] == "error"
+    assert rec["error_kind"] == "RuntimeError"
+    assert "nova exploded" not in caplog.text             # no exception message
+    assert "sk-ant-CHATERR123456789" not in caplog.text   # no secret from the question
+    assert "dev@secret.com" not in caplog.text            # no PII from the message
+
+
+def test_post_chat_hourly_cap_logs_throttled(http, db_session, caplog, monkeypatch):
+    """S16: busting the hourly token cap mid-chat emits a status=throttled line
+    (token numbers in the exception are never logged) and maps to 429."""
+    import json
+    import logging
+
+    cl, _ = http
+    load_seed(db_session)
+    headers, _ = _register(cl, db_session, "chat_cap@example.com")
+    pid = _make_project(cl, headers)
+
+    # Force the cap so the very first reservation busts it.
+    monkeypatch.setattr(get_settings(), "llm_hourly_token_cap", 1)
+    with caplog.at_level(logging.INFO, logger="modelmatch.llm"):
+        resp = cl.post(
+            f"/projects/{pid}/chat", json={"question": "How much have I saved?"}, headers=headers
+        )
+    assert resp.status_code == 429
+
+    lines = [r.getMessage() for r in caplog.records if r.name == "modelmatch.llm"]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["purpose"] == "chat" and rec["status"] == "throttled"
+    assert rec["error_kind"] == "HourlyTokenCapExceeded"
+
+
 def test_post_chat_hides_debug_from_normal_users(http, db_session):
     cl, _ = http
     load_seed(db_session)

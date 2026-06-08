@@ -25,6 +25,7 @@ from app.api import (
 )
 from app.config import get_settings
 from app.db import check_db
+from app.observability.metrics import render_metrics
 
 settings = get_settings()
 
@@ -67,3 +68,11 @@ def readyz(response: Response) -> dict[str, str]:
         return {"status": "ready", "db": "ok"}
     response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {"status": "not_ready", "db": "unavailable"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """Prometheus scrape target: per-LLM-call token counters + latency, labeled by
+    model + purpose (tokens, NOT dollars — Grafana applies the $/1k rate)."""
+    payload, content_type = render_metrics()
+    return Response(content=payload, media_type=content_type)
