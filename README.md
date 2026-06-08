@@ -105,18 +105,69 @@ modelmatch-backend/
 
 ## Getting Started
 
-> **Status: scaffolding (S1).** The full local stack (FastAPI + Postgres + compose, `/healthz` +
-> `/readyz`) lands with the S1 scaffold; the commands below are the intended workflow.
+> **Status: built through S16** (backend **v0.19.0**) — recommender, catalog ingestion (#3), savings +
+> quality gate, grounded chat (#4), the CI agent, metadata-only Jenkins + mint-once token, and
+> observability are in. The LLM/blob/secret backends default to `fake` (offline, **zero tokens**);
+> real Bedrock/S3/Secrets backends activate with the infra stories.
+
+Run Postgres in Docker and the backend on the host (hot reload). The one value you **must** change is
+`JWT_SECRET` — the placeholder in `.env.example` is rejected at startup (there is no built-in default).
 
 ```bash
-cp .env.example .env          # fill in local values
-uv sync                       # install dependencies
-docker compose up -d db       # local PostgreSQL
-uv run alembic upgrade head   # migrations (separate step, not on startup)
-uv run uvicorn app.main:app --reload   # dev server
+cp .env.example .env
+# REQUIRED: set a real JWT_SECRET, e.g.
+#   echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env   # then remove the placeholder line
+
+docker compose up -d db                # local PostgreSQL on :5432
+uv sync                                # install dependencies
+uv run alembic upgrade head            # build the schema (separate step, never on startup)
+uv run uvicorn app.main:app --reload   # dev server on :8000
 ```
 
-Or bring up the whole stack (FE + BE + DB) from the repo root with `docker compose up`.
+Health/observability: `GET /healthz` (liveness) · `GET /readyz` (readiness) · `GET /metrics`
+(Prometheus). Interactive API docs at `http://localhost:8000/docs`.
+
+> The compose `backend` service builds the production image, but for local dev prefer the host path
+> above: that image runs gunicorn (no reload), the compose service isn't yet passed a `JWT_SECRET`, and
+> the runtime image doesn't carry the Alembic migrations — so the schema must still be built with
+> `alembic upgrade head` from the host. Wiring the full in-container stack is part of the infra/compose
+> work.
+
+**New here?** Read the [Runbook & Demo Walkthrough](docs/runbook.md) — product story, the two-surface
+model rule, the CI agent proof path, env reference, and an end-to-end demo script.
+
+### Environment variables
+
+Config is read from env via `pydantic-settings` (no hardcoded secrets/URLs). The full template is
+[`.env.example`](.env.example); the most relevant knobs:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg://…@localhost:5432/modelmatch` | Postgres connection |
+| `JWT_SECRET` | `change-me-in-env` | JWT signing secret (set a real value) |
+| `BASELINE_MODEL_ID` | `Claude Sonnet 4.5` | demo baseline (computed, not run) |
+| `QUALITY_THRESHOLD` | `0.8` | acceptance-rate gate for banking savings |
+| `LLM_CLIENT` | `fake` | **in-cluster** LLM surface: `fake` \| `bedrock` (Nova via IRSA) |
+| `LLM_HOURLY_TOKEN_CAP` | `200000` | hard hourly cap on our Nova spend — aborts (429) |
+| `BLOB_STORE` / `SECRET_STORE` | `fake` / `fake` | ingestion blob / secret-ref backends (`s3` / `aws` later) |
+| `CI_AGENT_LLM_CLIENT` / `CI_AGENT_MODEL` | `anthropic` / `claude-haiku-4-5` | provider + model baked into the CI snippet (BYOK; never `fake`) |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | where the user's Jenkins POSTs `ci-runs` back |
+
+See the [runbook §9](docs/runbook.md#9-environment-variables) for the complete table (including the CI
+agent runtime vars).
+
+### Tests
+
+All three LLM uses sit behind one `LLMClient` with a **fake client + recorded fixtures**, so the suite
+runs **offline at zero token cost** (Postgres must be up — `docker compose up -d db`).
+
+```bash
+uv run pytest                         # full suite (~288 tests, fake LLM, offline)
+uv run pytest tests/test_savings.py   # a focused module
+
+# Live, GATED (spends real tokens — deliberate only)
+RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py
+```
 
 ## CI/CD Pipeline
 
@@ -144,6 +195,10 @@ graph LR
 - Branching: `feature/<story-id>-<desc>` → PR → `main` (protected). Conventional Commits; SemVer tags.
 
 ## Release History
+
+SemVer tags on `main`, one per merged story slice. Current: **v0.19.0** (S15c metadata-only Jenkins
+connection). Highlights: v0.18.0 observability (S16) · v0.16.0 catalog accuracy refresh (S5c) · v0.15.0
+grounded chat (S14b) · v0.13–v0.14 savings + quality gate + dashboard (S12–S14). Full log: `git tag`.
 
 - 0.0.1 — Initial scaffold (repo skeleton + stub entrypoint).
 
