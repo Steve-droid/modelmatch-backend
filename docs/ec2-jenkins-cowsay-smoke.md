@@ -1,19 +1,34 @@
-# Real-Jenkins cowsay smoke (S17a manual acceptance gate — RAN GREEN 2026-06-09)
+# Real-Jenkins cowsay smoke (S17a + S17b — RAN GREEN 2026-06-09)
 
-> **Status: PASSED (S17a), fake-agent run.** A restored EC2 Jenkins built the cowsay
-> `feature/modelmatch-smoke` branch; the `ModelMatch AI Review` stage ran the CI-Agent
-> (`modelmatch-agent`, `LLM_CLIENT=fake`) on the PR diff vs `master` and POSTed to the
-> **independent** app stack's `POST /projects/1/ci-runs` → **201**, and the run appeared
-> on the dashboard. **S17b** still owes the **live BYOK Haiku** variant (add the Anthropic
-> key as the Jenkins `modelmatch-model-api-key` credential, flip `LLM_CLIENT=anthropic`).
-> The automated halves are the Playwright happy path
-> (`modelmatch-frontend/e2e/happy-path.spec.ts`, hermetic) and the local real-stack ingest
-> (`e2e/real-stack.smoke.spec.ts`); this closed the one thing those can't — the CI-Agent
-> reviewing a real PR diff in real Jenkins, ingested to ModelMatch.
+> **Status: PASSED — fake (S17a) AND live BYOK Haiku (S17b).**
+>
+> **S17a (fake agent):** a restored EC2 Jenkins built the cowsay `feature/modelmatch-smoke`
+> branch; the `ModelMatch AI Review` stage ran the CI-Agent (`modelmatch-agent`,
+> `LLM_CLIENT=fake`) on the diff vs `master` → `POST /projects/1/ci-runs` → **201** → run
+> on the dashboard. Automated halves: Playwright happy path
+> (`modelmatch-frontend/e2e/happy-path.spec.ts`, hermetic) + local real-stack ingest
+> (`e2e/real-stack.smoke.spec.ts`).
+>
+> **S17b (LIVE, real money):** a **fresh CI-Agent (project id 2)** created via the UI,
+> Haiku picked as the selected model. Anthropic key added as the Jenkins
+> `modelmatch-model-api-key` Secret-text credential; the stage flipped to
+> `LLM_CLIENT=anthropic` (`ANTHROPIC_API_KEY` bound from the credential, passed to docker
+> **by name**). Build #7 → `api.anthropic.com 200`, **3406 in / 486 out** tokens →
+> `POST /projects/2/ci-runs` → **201** (`id:4`, actual **$0.005836** vs Sonnet baseline
+> **$0.017508** *computed*, **savings ~67%**, gate **fail** = 3 blocking, **5 findings**).
+> ≈ **$0.012** Anthropic spend total. The **response-rating UI** then banked it: rating
+> 4 accept / 1 reject → **80% = threshold** → Cumulative saved **$0 → $0.0117**.
 >
 > **AWS = real money (`ap-south-1`).** The two instances auto-stop at 1AM; they carry
 > **Elastic IPs** (stable URLs) + `restart: unless-stopped` (auto-start on restart). See
-> **§ As-built** for the live IDs/URLs and **§ Teardown** to destroy.
+> **§ As-built** for the live IDs/URLs and **§ Teardown** to destroy. **As of 2026-06-09 the
+> env is KEPT RUNNING** for demo rehearsal; tear down when done.
+
+> **TODO (S18 / pipeline design):** the **backend** CI pipeline needs a **Publish-to-ECR
+> stage** (build → test → push `modelmatch-backend` to ECR) so deploys pull a real registry
+> image instead of the hand-pushed `:smoke` tags used here. Same for the FE image. The
+> S17a/S17b images were built locally (`docker buildx --platform linux/amd64 --push`) and
+> pulled on the boxes — fine for a smoke, but the pipeline should own the publish.
 
 ## What this proves
 
