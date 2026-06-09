@@ -325,20 +325,31 @@ uv run pytest tests/test_savings.py # a focused module
 RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py
 ```
 
-Coverage today (~310 backend test functions): deterministic-pick scoring, savings math, ingestion
+Coverage today (~355 backend tests passing): deterministic-pick scoring, savings math, ingestion
 idempotency + output validation, chat grounding + honest refusal + SELECT-only SQL, quality gate,
 auth/owner-scoping, project lifecycle (edit/delete cascade + token rotation), migration round-trip,
 observability log line + `/metrics`, agent review.
 
 ```bash
 # Frontend (from modelmatch-frontend/)
-npm run test        # Vitest
+npm run test        # Vitest (unit/component — 68 tests)
 npm run typecheck   # tsc --noEmit
 npm run build       # production build
+npm run e2e         # Playwright happy path (hermetic — backend mocked via route interception)
 ```
 
-> **[planned] S17 e2e:** a Playwright happy-path (form → pick → project → dashboard + chat with a mocked
-> run) and the unified FE+BE+DB integration compose are not in yet.
+**S17 e2e (Playwright).** One CI-able **happy path** drives the real SPA end-to-end with the backend
+**fully mocked** (`page.route`): login → home hub → *Create a new CI-Agent* → recommend (ci_review) →
+pick → defer-create at the Jenkins step → CI-setup token → dashboard (seeded by a mocked CI run) →
+grounded-chat opener → one grounded question. A second **optional real-stack smoke**
+(`npm run e2e:all`, project `real-stack`) runs the same flow against a **real backend** (compose
+Postgres + app on `:8000`) and exercises the genuine **`POST /ci-runs`** ingest with a real per-project
+token; it **self-skips** when `:8000` is unreachable (no-op in plain CI). Both cost **$0** — the CI run
+is a *mocked* agent result (deterministic savings, no LLM).
+
+> The **real-Jenkins** version of the proof path (the CI-Agent reviewing a real PR on the cowsay app on
+> an EC2 Jenkins, ingested to the dashboard) is a **manual, gated** demo-rehearsal — see
+> [`ec2-jenkins-cowsay-smoke.md`](ec2-jenkins-cowsay-smoke.md).
 
 ---
 
@@ -378,7 +389,7 @@ is fine for everything except the live agent call.
 | Auth, recommender, catalog, ingestion #3, savings + quality gate, chat #4, observability, CI agent, metadata-only Jenkins + mint-once token | **Done** (backend v0.19.0, frontend v0.4.0) |
 | FE: login, dashboard + chat panel, recommender/project/Jenkins onboarding | **Done** (S15a/S15b/S15c) |
 | **Project lifecycle** — edit / re-pick (`PATCH`), delete (`DELETE`, FK cascade), defer-create (no orphan), Jenkins URL validation, CI-token regenerate (`/ci-setup/rotate`) | **Done** (S15d — backend v0.20.0, frontend v0.5.0) |
-| **e2e** — Playwright happy path + unified integration compose | **[planned]** (S17) |
+| **e2e + real-Jenkins smoke** — Playwright happy path + real-stack `/ci-runs` smoke + the **FE+BE+DB-on-ECR** cowsay smoke on real EC2 Jenkins | **Done (S17a)** — automated e2e green + the [real-Jenkins smoke](ec2-jenkins-cowsay-smoke.md) **ran green** (fake agent). **S17b** owes the live-BYOK Haiku run + the response-rating UI |
 | **Infra** — Terraform (EKS, VPC, ECR, IRSA, S3 state) | **[planned]** — `modelmatch-infra` is a SHELL repo |
 | **GitOps** — Helm umbrella + ArgoCD, cert-manager, ingress, monitoring/logging | **[planned]** — `modelmatch-gitops` is a SHELL repo |
 | Real `BLOB_STORE=s3` / `SECRET_STORE=aws` / `LLM_CLIENT=bedrock` live | **[planned]** — only `fake` backends wired today |
@@ -391,6 +402,7 @@ is fine for everything except the live agent call.
 
 - Per-repo READMEs: [`../README.md`](../README.md) (backend), `../../modelmatch-frontend/README.md`.
 - CI agent details: [`../agent/README.md`](../agent/README.md).
+- Real-Jenkins cowsay smoke (manual, gated): [`ec2-jenkins-cowsay-smoke.md`](ec2-jenkins-cowsay-smoke.md).
 - Product spec: [`../../docs/planning/`](../../docs/planning/) — `prd-1.md`, `architecture.md`,
   `module-reconciliation.md`, `mentor-notes-2026-06-04.md`, `00-backlog.md`.
 - Architecture diagrams: [`./diagrams/`](./diagrams/) (draw.io sources).
