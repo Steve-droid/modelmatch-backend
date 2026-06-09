@@ -197,10 +197,21 @@ graph LR
 
 ## Release History
 
-SemVer tags on `main`, one per merged story slice. Current: **v0.20.0** (S15d project lifecycle —
-edit/delete cascade + CI-token rotation). Highlights: v0.19.0 metadata-only Jenkins (S15c) · v0.18.0
-observability (S16) · v0.16.0 catalog accuracy refresh (S5c) · v0.15.0 grounded chat (S14b) · v0.13–v0.14
-savings + quality gate + dashboard (S12–S14). Full log: `git tag`.
+SemVer tags on `main`, one per merged story slice. Current: **v1.0.0** — the backend is
+**application feature-complete**: the deterministic recommender, catalog ingestion, savings engine +
+quality gate, grounded chat, and the CI code-review agent, proven end-to-end against a **live Claude
+Haiku** CI review ingested to the dashboard (S17). Findings can be rated accept/reject and a run's
+savings bank only when the acceptance rate clears the quality threshold.
+
+> **Scope of 1.0.0:** this marks the *application* as releasable. The remaining portfolio work is the
+> **DevOps delivery** — a per-repo CI pipeline that builds/tests and **publishes the image to ECR**,
+> Terraform/EKS infra, GitOps/ArgoCD, the monitoring + logging stack, and the S18 docs — tracked
+> separately as the next phase.
+
+Highlights: v0.22.0 S17a self-contained image + tests/e2e + real-Jenkins smoke · v0.21.0 demo-readiness ·
+v0.19.0 metadata-only Jenkins (S15c) · v0.18.0 observability (S16) · v0.16.0 catalog accuracy refresh
+(S5c) · v0.15.0 grounded chat (S14b) · v0.13–v0.14 savings + quality gate + dashboard (S12–S14). Full
+log: `git tag`.
 
 - 0.0.1 — Initial scaffold (repo skeleton + stub entrypoint).
 
