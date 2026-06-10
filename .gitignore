@@ -19,6 +19,10 @@ venv/
 # Alembic local
 *.sqlite3
 
+# Local demo/reference data copied from tracked fixtures/seeds.
+# Not part of the application image or source-controlled artifact set.
+data/
+
 # OS / editor
 .DS_Store
 .idea/
