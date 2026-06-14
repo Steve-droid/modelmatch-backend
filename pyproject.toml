@@ -19,8 +19,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real LLM provider SDKs — installed in the agent image (uv sync --extra llm) and
-# in-cluster; NOT needed for the core API or the offline fake-client tests.
+# In-cluster backend surface (ingestion #3 + chat #4) talks to Bedrock Nova via IRSA
+# ONLY (the two-surface rule), so its runtime image needs JUST boto3 — never the BYOK
+# anthropic/gemini SDKs. The backend image is built with `uv sync --extra bedrock`.
+bedrock = [
+    "boto3>=1.35",
+]
+# Full BYOK provider set — installed in the AGENT image (uv sync --extra llm), which is
+# provider-agnostic (Anthropic/Gemini/Bedrock). Superset of `bedrock`. NOT needed for
+# the core API or the offline fake-client tests.
 llm = [
     "anthropic>=0.39",
     "google-genai>=1.0",

@@ -7,10 +7,13 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 
 # Install dependencies first (cached) without the project, then the project.
+# --extra bedrock pulls boto3 so the in-cluster LLM surface (ingestion #3 + chat #4)
+# can call Bedrock Nova via IRSA. ONLY boto3 (the two-surface rule) — the BYOK
+# anthropic/gemini SDKs live in the agent image's `--extra llm`, never here.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --extra bedrock
 COPY app ./app
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra bedrock
 
 # --- runtime: slim, non-root, gunicorn+uvicorn (no --reload) ---
 FROM python:3.12-slim AS runtime
