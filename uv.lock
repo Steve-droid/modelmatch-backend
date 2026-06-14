@@ -784,6 +784,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bedrock = [
+    { name = "boto3" },
+]
 llm = [
     { name = "anthropic" },
     { name = "boto3" },
@@ -801,6 +804,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "anthropic", marker = "extra == 'llm'", specifier = ">=0.39" },
     { name = "argon2-cffi", specifier = ">=23.1" },
+    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.35" },
     { name = "boto3", marker = "extra == 'llm'", specifier = ">=1.35" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "google-genai", marker = "extra == 'llm'", specifier = ">=1.0" },
@@ -814,7 +818,7 @@ requires-dist = [
     { name = "sqlglot", specifier = ">=25.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
-provides-extras = ["llm"]
+provides-extras = ["bedrock", "llm"]
 
 [package.metadata.requires-dev]
 dev = [
