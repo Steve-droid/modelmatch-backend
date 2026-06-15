@@ -1,0 +1,17 @@
+{
+  "rows": [
+    {
+      "model": "Amazon Nova 2 Lite",
+      "vendor": "Amazon",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 77.0,
+      "costPerMtok": 0.07,
+      "taskType": "ci_review",
+      "source": "Nova 2 Lite announcement (fixture)",
+      "measuredAt": "2026-03-01",
+      "inputPricePerMtok": 0.07,
+      "outputPricePerMtok": 0.28
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "rows": [
+    {
+      "model": "Amazon Nova 2 Lite",
+      "vendor": "Amazon",
+      "benchmark": "SWE-bench Verified",
+      "metric": "pass@1_percent",
+      "score": 41.0,
+      "costPerMtok": 0.07,
+      "taskType": "agentic_coding",
+      "harness": "SWE-agent",
+      "harnessVendor": "Princeton",
+      "source": "Nova 2 technical report (fixture)",
+      "measuredAt": "2026-01-20"
+    },
+    {
+      "model": "Amazon Nova Lite",
+      "vendor": "Amazon",
+      "benchmark": "SWE-bench Verified",
+      "metric": "pass@1_percent",
+      "score": 38.0,
+      "costPerMtok": 0.06,
+      "taskType": "agentic_coding",
+      "harness": "SWE-agent",
+      "harnessVendor": "Princeton",
+      "source": "Nova 2 technical report (fixture)",
+      "measuredAt": "2026-01-20"
+    }
+  ]
+}

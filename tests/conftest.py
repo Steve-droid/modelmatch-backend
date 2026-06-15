@@ -26,6 +26,21 @@ from app.config import get_settings
 ROOT = Path(__file__).resolve().parent.parent
 TEST_DB = "modelmatch_orm_test"
 
+# Fixtures that imply a real Postgres. Any test pulling one of these (directly or
+# transitively) is DB-backed and gets auto-marked `integration` below.
+_DB_FIXTURES = {"migrated_engine", "db_session", "client"}
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-mark DB-backed tests `integration` so the CI lanes can split cleanly
+    WITHOUT hand-marking ~20 files: the fast/unit lane runs `-m "not integration"`
+    (no containers), the full lane runs `-m integration` against a compose Postgres.
+    Keyed on the resolved fixture closure, so it's exact per test — a pure unit test
+    living in a DB-heavy file is still treated as a unit test."""
+    for item in items:
+        if _DB_FIXTURES.intersection(getattr(item, "fixturenames", ())):
+            item.add_marker("integration")
+
 
 @pytest.fixture
 def migrated_engine():

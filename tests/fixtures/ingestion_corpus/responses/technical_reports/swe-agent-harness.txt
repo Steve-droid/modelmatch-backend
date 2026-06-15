@@ -1,0 +1,19 @@
+```json
+{
+  "rows": [
+    {
+      "model": "Claude Haiku 4.5",
+      "vendor": "Anthropic",
+      "benchmark": "SWE-bench Verified",
+      "metric": "pass@1_percent",
+      "score": 45.0,
+      "costPerMtok": 0.8,
+      "taskType": "agentic_coding",
+      "harness": "SWE-agent",
+      "harnessVendor": "Princeton",
+      "source": "SWE-agent harness report (fixture)",
+      "measuredAt": "2026-02-01"
+    }
+  ]
+}
+```

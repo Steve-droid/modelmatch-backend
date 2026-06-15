@@ -1,0 +1,12 @@
+{
+  "name": "modelmatch-backend-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Thin Playwright smoke for the BACKEND pipeline (P18) — drives the backend image under test through the real FE/API path. NOT the frontend's full suite.",
+  "scripts": {
+    "test:e2e": "playwright test --config playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0"
+  }
+}

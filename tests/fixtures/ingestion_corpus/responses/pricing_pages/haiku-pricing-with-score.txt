@@ -1,0 +1,19 @@
+```json
+{
+  "rows": [
+    {
+      "model": "Claude Haiku 4.5",
+      "vendor": "Anthropic",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 82.0,
+      "costPerMtok": 0.8,
+      "taskType": "ci_review",
+      "source": "Anthropic pricing page (fixture)",
+      "measuredAt": "2026-02-10",
+      "inputPricePerMtok": 0.8,
+      "outputPricePerMtok": 4.0
+    }
+  ]
+}
+```

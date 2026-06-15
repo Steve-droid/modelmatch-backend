@@ -1,0 +1,20 @@
+{
+  "rows": [
+    {
+      "model": "Overflow Model",
+      "vendor": "X",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 9999999,
+      "costPerMtok": 1.0
+    },
+    {
+      "model": "Negative Cost",
+      "vendor": "X",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 50.0,
+      "costPerMtok": -5
+    }
+  ]
+}

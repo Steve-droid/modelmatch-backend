@@ -1,0 +1,7 @@
+# Trivy waivers for the backend image scan (P18). DOCUMENTED ignores ONLY — the gate
+# fails on CRITICAL + HIGH, and the policy is remediate-not-waive (bump the base image
+# or the dependency first). Each entry MUST carry a CVE id, a reason, and a date.
+#
+# Currently empty: the runtime image is python:3.12-slim with a uv-resolved, locked
+# dependency set (uv.lock) and no waived advisories. If a HIGH/CRITICAL with no
+# available fix blocks a release, add it here with justification + a recheck date.
