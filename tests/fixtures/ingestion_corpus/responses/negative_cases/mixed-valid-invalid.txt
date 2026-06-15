@@ -1,0 +1,26 @@
+```json
+{
+  "rows": [
+    {
+      "model": "Gemini 2.0 Flash",
+      "vendor": "Google",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 79.0,
+      "costPerMtok": 0.1,
+      "taskType": "ci_review",
+      "source": "mixed scrape (fixture)",
+      "measuredAt": "2026-03-05",
+      "inputPricePerMtok": 0.1,
+      "outputPricePerMtok": 0.4
+    },
+    {
+      "model": "Half Row",
+      "vendor": "ACME",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "costPerMtok": 0.3
+    }
+  ]
+}
+```

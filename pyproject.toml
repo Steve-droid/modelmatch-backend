@@ -5,6 +5,9 @@ description = "ModelMatch backend — deterministic recommender, CI savings engi
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
+    # Floor starlette past CVE-2026-54282/54283 (fastapi pulls it transitively). Keeps
+    # the pip-audit gate green — remediate-not-waive.
+    "starlette>=1.3.1",
     "uvicorn[standard]>=0.32",
     "gunicorn>=23.0",
     "pydantic-settings>=2.6",
@@ -38,6 +41,10 @@ llm = [
 dev = [
     "pytest>=8.3",
     "httpx>=0.28",
+    # Static/dep security gate run by the CI pipeline (P18) — dev-only, never shipped
+    # in the runtime image. Bandit = Python SAST; pip-audit = dependency CVE audit.
+    "bandit>=1.8",
+    "pip-audit>=2.7",
 ]
 
 [build-system]
@@ -46,3 +53,21 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --strict-markers: an unregistered @pytest.mark.* is an error, so the integration
+# marker can't silently rot. The conftest auto-marks every DB-backed test (any test
+# pulling the migrated_engine/db_session/client fixtures) as `integration`, so the CI
+# fast lane runs `-m "not integration"` (no containers) and the full lane runs
+# `-m integration` against a compose Postgres.
+addopts = "--strict-markers"
+markers = [
+    "integration: DB-backed — needs a real Postgres (compose). Auto-applied to any test using the DB fixtures; deselected in the fast/unit lane.",
+]
+
+[tool.bandit]
+# The pipeline targets `app` and `agent` explicitly; this keeps an ad-hoc `bandit -r .`
+# from scanning tests/fixtures. Gate thresholds (severity/confidence) are passed as CLI
+# flags in the Jenkinsfile, not pinned here, so they stay visible at the gate.
+exclude_dirs = ["tests", ".venv", "migrations"]

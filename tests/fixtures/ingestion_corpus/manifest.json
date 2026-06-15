@@ -1,0 +1,481 @@
+[
+  {
+    "id": "leaderboards/codereviewbench-top",
+    "category": "leaderboards",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "leaderboards/codereviewbench-top.md",
+    "response": "responses/leaderboards/codereviewbench-top.txt",
+    "status": "ingested",
+    "rowsCreated": 5,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "multi_row"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "leaderboards/codereviewbench-open-models",
+    "category": "leaderboards",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "leaderboards/codereviewbench-open-models.md",
+    "response": "responses/leaderboards/codereviewbench-open-models.txt",
+    "status": "ingested",
+    "rowsCreated": 2,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "breadth"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "leaderboards/codereviewbench-anthropic-subset",
+    "category": "leaderboards",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "leaderboards/codereviewbench-anthropic-subset.md",
+    "response": "responses/leaderboards/codereviewbench-anthropic-subset.txt",
+    "status": "ingested",
+    "rowsCreated": 2,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "leaderboards/codereviewbench-partial-one-bad",
+    "category": "leaderboards",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "leaderboards/codereviewbench-partial-one-bad.md",
+    "response": "responses/leaderboards/codereviewbench-partial-one-bad.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 1,
+    "tags": [
+      "partial",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "leaderboards/codereviewbench-q1-snapshot",
+    "category": "leaderboards",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "leaderboards/codereviewbench-q1-snapshot.md",
+    "response": "responses/leaderboards/codereviewbench-q1-snapshot.txt",
+    "status": "ingested",
+    "rowsCreated": 3,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "multi_row"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/claude-haiku",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/claude-haiku.md",
+    "response": "responses/model_cards/claude-haiku.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/claude-sonnet",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/claude-sonnet.md",
+    "response": "responses/model_cards/claude-sonnet.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "baseline"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/gemini-flash",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/gemini-flash.md",
+    "response": "responses/model_cards/gemini-flash.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/nova-lite",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/nova-lite.md",
+    "response": "responses/model_cards/nova-lite.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "dedupe_identity"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/nova-2-lite",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/nova-2-lite.md",
+    "response": "responses/model_cards/nova-2-lite.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/deepswe-open",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/deepswe-open.md",
+    "response": "responses/model_cards/deepswe-open.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "breadth"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "model_cards/haiku-reposted",
+    "category": "model_cards",
+    "kind": "model_card",
+    "group": "codereviewbench",
+    "source": "model_cards/haiku-reposted.md",
+    "response": "responses/model_cards/haiku-reposted.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "idempotency"
+    ],
+    "dedupesWith": "model_cards/claude-haiku"
+  },
+  {
+    "id": "pricing_pages/anthropic-pricing",
+    "category": "pricing_pages",
+    "kind": "pricing_page",
+    "group": "none",
+    "source": "pricing_pages/anthropic-pricing.md",
+    "response": "responses/pricing_pages/anthropic-pricing.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "pricing_only",
+      "partial_source"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "pricing_pages/google-gemini-pricing",
+    "category": "pricing_pages",
+    "kind": "pricing_page",
+    "group": "none",
+    "source": "pricing_pages/google-gemini-pricing.md",
+    "response": "responses/pricing_pages/google-gemini-pricing.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "pricing_only",
+      "partial_source"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "pricing_pages/amazon-bedrock-pricing",
+    "category": "pricing_pages",
+    "kind": "pricing_page",
+    "group": "none",
+    "source": "pricing_pages/amazon-bedrock-pricing.md",
+    "response": "responses/pricing_pages/amazon-bedrock-pricing.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "pricing_only",
+      "partial_source"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "pricing_pages/haiku-pricing-with-score",
+    "category": "pricing_pages",
+    "kind": "pricing_page",
+    "group": "codereviewbench",
+    "source": "pricing_pages/haiku-pricing-with-score.md",
+    "response": "responses/pricing_pages/haiku-pricing-with-score.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary",
+      "split_price"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "technical_reports/nova-2-report",
+    "category": "technical_reports",
+    "kind": "technical_report",
+    "group": "swebench",
+    "source": "technical_reports/nova-2-report.md",
+    "response": "responses/technical_reports/nova-2-report.txt",
+    "status": "ingested",
+    "rowsCreated": 2,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "secondary",
+      "swebench"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "technical_reports/swe-agent-harness",
+    "category": "technical_reports",
+    "kind": "technical_report",
+    "group": "swebench",
+    "source": "technical_reports/swe-agent-harness.md",
+    "response": "responses/technical_reports/swe-agent-harness.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "secondary",
+      "swebench",
+      "harness"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "technical_reports/codereviewbench-paper",
+    "category": "technical_reports",
+    "kind": "technical_report",
+    "group": "codereviewbench",
+    "source": "technical_reports/codereviewbench-paper.md",
+    "response": "responses/technical_reports/codereviewbench-paper.txt",
+    "status": "ingested",
+    "rowsCreated": 2,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "release_posts/haiku-launch",
+    "category": "release_posts",
+    "kind": "release_post",
+    "group": "codereviewbench",
+    "source": "release_posts/haiku-launch.md",
+    "response": "responses/release_posts/haiku-launch.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "release_posts/nova-2-announce",
+    "category": "release_posts",
+    "kind": "release_post",
+    "group": "codereviewbench",
+    "source": "release_posts/nova-2-announce.md",
+    "response": "responses/release_posts/nova-2-announce.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "release_posts/gemini-flash-post",
+    "category": "release_posts",
+    "kind": "release_post",
+    "group": "codereviewbench",
+    "source": "release_posts/gemini-flash-post.md",
+    "response": "responses/release_posts/gemini-flash-post.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 0,
+    "tags": [
+      "positive",
+      "primary"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/hiring-blog",
+    "category": "negative_cases",
+    "kind": "blog",
+    "group": "none",
+    "source": "negative_cases/hiring-blog.md",
+    "response": "responses/negative_cases/hiring-blog.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "no_rows"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/outage-postmortem",
+    "category": "negative_cases",
+    "kind": "blog",
+    "group": "none",
+    "source": "negative_cases/outage-postmortem.md",
+    "response": "responses/negative_cases/outage-postmortem.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "no_rows"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/opinion-piece",
+    "category": "negative_cases",
+    "kind": "blog",
+    "group": "none",
+    "source": "negative_cases/opinion-piece.md",
+    "response": "responses/negative_cases/opinion-piece.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 0,
+    "tags": [
+      "negative",
+      "no_rows"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/model-refusal-prose",
+    "category": "negative_cases",
+    "kind": "blog",
+    "group": "none",
+    "source": "negative_cases/model-refusal-prose.md",
+    "response": "responses/negative_cases/model-refusal-prose.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 1,
+    "tags": [
+      "negative",
+      "non_json",
+      "envelope_reject"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/out-of-bounds",
+    "category": "negative_cases",
+    "kind": "leaderboard",
+    "group": "none",
+    "source": "negative_cases/out-of-bounds.md",
+    "response": "responses/negative_cases/out-of-bounds.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 2,
+    "tags": [
+      "negative",
+      "out_of_bounds"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/missing-required-fields",
+    "category": "negative_cases",
+    "kind": "leaderboard",
+    "group": "none",
+    "source": "negative_cases/missing-required-fields.md",
+    "response": "responses/negative_cases/missing-required-fields.txt",
+    "status": "invalid",
+    "rowsCreated": 0,
+    "rowsRejected": 2,
+    "tags": [
+      "negative",
+      "missing_fields"
+    ],
+    "dedupesWith": null
+  },
+  {
+    "id": "negative_cases/mixed-valid-invalid",
+    "category": "negative_cases",
+    "kind": "leaderboard",
+    "group": "codereviewbench",
+    "source": "negative_cases/mixed-valid-invalid.md",
+    "response": "responses/negative_cases/mixed-valid-invalid.txt",
+    "status": "ingested",
+    "rowsCreated": 1,
+    "rowsRejected": 1,
+    "tags": [
+      "partial",
+      "primary"
+    ],
+    "dedupesWith": null
+  }
+]

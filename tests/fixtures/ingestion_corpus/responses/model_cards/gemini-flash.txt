@@ -1,0 +1,20 @@
+```json
+{
+  "rows": [
+    {
+      "model": "Gemini 2.0 Flash",
+      "vendor": "Google",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 79.0,
+      "costPerMtok": 0.1,
+      "taskType": "ci_review",
+      "source": "Google model card (fixture)",
+      "measuredAt": "2026-02-12",
+      "inputPricePerMtok": 0.1,
+      "outputPricePerMtok": 0.4,
+      "contextWindow": 1000000
+    }
+  ]
+}
+```

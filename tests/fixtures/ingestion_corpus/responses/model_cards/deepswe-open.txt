@@ -1,0 +1,16 @@
+{
+  "rows": [
+    {
+      "model": "DeepSWE-32B",
+      "vendor": "Together",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 71.0,
+      "costPerMtok": 0.4,
+      "taskType": "ci_review",
+      "source": "DeepSWE model card (fixture)",
+      "measuredAt": "2026-03-02",
+      "contextWindow": 128000
+    }
+  ]
+}

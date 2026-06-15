@@ -1,0 +1,18 @@
+{
+  "rows": [
+    {
+      "model": "Claude Sonnet 4.5",
+      "vendor": "Anthropic",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 88.0,
+      "costPerMtok": 3.0,
+      "taskType": "ci_review",
+      "source": "Anthropic model card (fixture)",
+      "measuredAt": "2026-02-10",
+      "inputPricePerMtok": 3.0,
+      "outputPricePerMtok": 15.0,
+      "contextWindow": 200000
+    }
+  ]
+}

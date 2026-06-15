@@ -1,0 +1,17 @@
+{
+  "rows": [
+    {
+      "model": "No Metric Model",
+      "vendor": "ACME",
+      "benchmark": "CodeReviewBench",
+      "costPerMtok": 0.5
+    },
+    {
+      "model": "No Score Model",
+      "vendor": "ACME",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "costPerMtok": 0.5
+    }
+  ]
+}

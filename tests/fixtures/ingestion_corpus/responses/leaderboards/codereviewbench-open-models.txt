@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "model": "DeepSWE-32B",
+      "vendor": "Together",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 71.0,
+      "costPerMtok": 0.4,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench leaderboard (fixture)",
+      "measuredAt": "2026-03-02"
+    },
+    {
+      "model": "GPT-4.x-mini",
+      "vendor": "OpenAI",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 80.0,
+      "costPerMtok": 0.45,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench leaderboard (fixture)",
+      "measuredAt": "2026-03-02"
+    }
+  ]
+}

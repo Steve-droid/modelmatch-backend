@@ -1,0 +1,18 @@
+{
+  "rows": [
+    {
+      "model": "Amazon Nova Lite",
+      "vendor": "Amazon",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 74.0,
+      "costPerMtok": 0.06,
+      "taskType": "ci_review",
+      "source": "Amazon model card (fixture)",
+      "measuredAt": "2026-03-01",
+      "inputPricePerMtok": 0.06,
+      "outputPricePerMtok": 0.24,
+      "contextWindow": 300000
+    }
+  ]
+}

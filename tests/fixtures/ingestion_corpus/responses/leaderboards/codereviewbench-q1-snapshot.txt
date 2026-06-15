@@ -1,0 +1,45 @@
+```json
+{
+  "rows": [
+    {
+      "model": "Gemini 2.0 Flash",
+      "vendor": "Google",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 79.0,
+      "costPerMtok": 0.1,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench leaderboard (fixture)",
+      "measuredAt": "2026-03-04",
+      "inputPricePerMtok": 0.1,
+      "outputPricePerMtok": 0.4
+    },
+    {
+      "model": "Amazon Nova 2 Lite",
+      "vendor": "Amazon",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 77.0,
+      "costPerMtok": 0.07,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench leaderboard (fixture)",
+      "measuredAt": "2026-03-04",
+      "inputPricePerMtok": 0.07,
+      "outputPricePerMtok": 0.28
+    },
+    {
+      "model": "Amazon Nova Lite",
+      "vendor": "Amazon",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 74.0,
+      "costPerMtok": 0.06,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench leaderboard (fixture)",
+      "measuredAt": "2026-03-04",
+      "inputPricePerMtok": 0.06,
+      "outputPricePerMtok": 0.24
+    }
+  ]
+}
+```

@@ -1,0 +1,30 @@
+{
+  "rows": [
+    {
+      "model": "Claude Sonnet 4.5",
+      "vendor": "Anthropic",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 88.0,
+      "costPerMtok": 3.0,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench paper (fixture)",
+      "measuredAt": "2026-02-15",
+      "inputPricePerMtok": 3.0,
+      "outputPricePerMtok": 15.0
+    },
+    {
+      "model": "Claude Haiku 4.5",
+      "vendor": "Anthropic",
+      "benchmark": "CodeReviewBench",
+      "metric": "review_score_percent",
+      "score": 82.0,
+      "costPerMtok": 0.8,
+      "taskType": "ci_review",
+      "source": "CodeReviewBench paper (fixture)",
+      "measuredAt": "2026-02-15",
+      "inputPricePerMtok": 0.8,
+      "outputPricePerMtok": 4.0
+    }
+  ]
+}

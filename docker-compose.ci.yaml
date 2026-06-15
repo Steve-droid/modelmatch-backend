@@ -1,0 +1,98 @@
+# Throwaway CI stack for the BACKEND pipeline (P18). Mirrors the frontend repo's
+# proven E2E stack (FE+BE+Postgres+migrate), but here the BACKEND IMAGE is the
+# freshly-built candidate under test (BACKEND_IMAGE), and the frontend is PULLED from
+# ECR (FRONTEND_IMAGE) — the inverse of the frontend pipeline. Two uses:
+#   • Integration stage — only the `db` service is started; pytest builds its own
+#     throwaway DB on it (tests/conftest.py) and runs `-m integration`.
+#   • E2E stage — the whole stack: Postgres → one-off migrate+seed → backend
+#     (candidate) → frontend (ECR), driven by a thin Playwright smoke. `down -v`
+#     afterwards so every run starts from an empty volume. NEVER the cluster/dev DB.
+#
+# fake-LLM by default (LLM_CLIENT=fake). The single e2e-live real-Bedrock path (main /
+# #e2e-live) flips LLM_CLIENT=bedrock and supplies a real CHAT_READONLY_DB_PASSWORD;
+# the backend then resolves Bedrock creds from the Jenkins EC2 instance profile (IMDS)
+# — no static keys. Everything is overridable via the pipeline's env / a local `.env`.
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16}
+    environment:
+      POSTGRES_USER: modelmatch
+      POSTGRES_PASSWORD: modelmatch
+      POSTGRES_DB: modelmatch
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modelmatch -d modelmatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-off: build the schema + seed the catalog with the SAME backend image under
+  # test, then exit. Migrations are a separate step, never on serve-startup (mirrors
+  # the K8s migrate-Job). LLM_CLIENT/CHAT_READONLY_DB_PASSWORD are passed through so the
+  # chat-role migration creates the read-only role with the SAME password the backend
+  # will connect with (they must match once LLM_CLIENT != fake).
+  migrate:
+    image: ${BACKEND_IMAGE:-modelmatch-backend:latest}
+    command:
+      - sh
+      - -c
+      - "alembic upgrade head && python -c \"from app.db import SessionLocal; from app.catalog.seed import load_seed; s=SessionLocal(); load_seed(s); s.commit()\""
+    environment:
+      DATABASE_URL: postgresql+psycopg://modelmatch:modelmatch@db:5432/modelmatch
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      LLM_CLIENT: ${LLM_CLIENT:-fake}
+      CHAT_READONLY_DB_PASSWORD: ${CHAT_READONLY_DB_PASSWORD:-modelmatch_chat_ro}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    image: ${BACKEND_IMAGE:-modelmatch-backend:latest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://modelmatch:modelmatch@db:5432/modelmatch
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:8080}
+      # LLM surface: fake offline; bedrock only on the gated e2e-live path. boto3 then
+      # resolves creds from the instance profile (IMDS) — no static keys in compose.
+      LLM_CLIENT: ${LLM_CLIENT:-fake}
+      BLOB_STORE: ${BLOB_STORE:-fake}
+      SECRET_STORE: ${SECRET_STORE:-fake}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-apac.amazon.nova-lite-v1:0}
+      CHAT_READONLY_DB_PASSWORD: ${CHAT_READONLY_DB_PASSWORD:-modelmatch_chat_ro}
+      # Tight ceilings for the live smoke so a stray loop can't run up the bill.
+      INGEST_MAX_TOKENS: ${INGEST_MAX_TOKENS:-512}
+      LLM_HOURLY_TOKEN_CAP: ${LLM_HOURLY_TOKEN_CAP:-20000}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-modelmatch-frontend:latest}
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

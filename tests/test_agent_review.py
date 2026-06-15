@@ -44,6 +44,13 @@ from app.llm.fake import FakeLLMClient
 from app.schemas.findings import Finding
 
 ROOT = Path(__file__).resolve().parent.parent
+def _structured_error(stderr: str) -> dict:
+    """The CLI contract puts the S16 per-request LLM log line(s) AND the final
+    structured-error JSON on stderr, so the error is the LAST non-empty line — not the
+    whole stream. (On paths that fail before any LLM call, stderr is just that one line.)"""
+    return json.loads(stderr.strip().splitlines()[-1])
+
+
 DIFF = "--- a/app.py\n+++ b/app.py\n@@\n-pass\n+exec(user_input)\n"
 
 HIGH = '{"findings":[{"severity":"high","category":"security","file":"app.py","line":4,"message":"exec on user input"}]}'
@@ -190,7 +197,7 @@ def test_cli_invalid_llm_client_exits_4_with_structured_error():
     assert proc.returncode == 4
     assert proc.stdout == ""  # nothing half-written to stdout
     assert "Traceback" not in proc.stderr  # no raw traceback
-    err = json.loads(proc.stderr)  # structured JSON on stderr
+    err = _structured_error(proc.stderr)  # structured JSON on the last stderr line
     assert err["error"] == "llm_client_error"
     assert "nope" in err["detail"]
     assert "exec(user_input)" not in proc.stderr  # diff never leaked
@@ -208,7 +215,7 @@ def test_cli_missing_diff_file_exits_4_with_structured_error(tmp_path):
     assert proc.returncode == 4
     assert proc.stdout == ""
     assert "Traceback" not in proc.stderr  # no raw traceback
-    err = json.loads(proc.stderr)
+    err = _structured_error(proc.stderr)
     assert err["error"] == "diff_read_error"
 
 
@@ -219,6 +226,6 @@ def test_cli_missing_sdk_exits_4_with_structured_error():
     assert proc.returncode == 4
     assert proc.stdout == ""
     assert "Traceback" not in proc.stderr
-    err = json.loads(proc.stderr)
+    err = _structured_error(proc.stderr)
     assert err["error"] == "llm_client_error"
     assert "exec(user_input)" not in proc.stderr  # diff never leaked

@@ -1,0 +1,17 @@
+# Trivy waivers for the backend image scan (P18).
+#
+# CI security policy (the Trivy stage in the Jenkinsfile runs
+# `--severity CRITICAL,HIGH --ignore-unfixed --exit-code 1`):
+#   * The pipeline FAILS on any HIGH/CRITICAL vulnerability that HAS AN AVAILABLE FIX
+#     (remediate-not-waive: bump the base image or the dependency).
+#   * Unfixed OS-package advisories (no patched version published yet) are reported by
+#     Trivy but do NOT block a release — there is nothing to bump to. The moment a fixed
+#     version ships, `--ignore-unfixed` no longer suppresses it and the gate fails again.
+#   * Python dependency CVEs are covered twice: pip-audit (static/dep gate) + Trivy's
+#     library scan — and those are NOT subject to --ignore-unfixed if they carry a fix.
+#
+# This file is reserved for SPECIFIC, DOCUMENTED per-CVE waivers (a fixed-but-deliberately-
+# deferred advisory). Do NOT enumerate the routine unfixed base-OS set here — --ignore-unfixed
+# already handles it. Each entry below MUST carry a CVE id, a reason, and a recheck date.
+#
+# (currently none)
