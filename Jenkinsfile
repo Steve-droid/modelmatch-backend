@@ -174,8 +174,11 @@ pipeline {
         }
 
         stage('Trivy image scan') {
-          // Gate on CRITICAL + HIGH. Documented waivers only, via the committed
-          // .trivyignore (currently empty — slim base + uv.lock-pinned deps).
+          // Gate on CRITICAL + HIGH that HAVE A FIX (--ignore-unfixed): remediate-not-
+          // waive stays in force for anything actionable, but unfixed base-OS advisories
+          // (no upstream patch yet) don't permanently block releases — the moment a fix
+          // ships they stop being "unfixed" and the gate fails again. .trivyignore is
+          // reserved for specific, documented per-CVE waivers (currently none).
           steps {
             sh '''
               set -eu
@@ -185,6 +188,7 @@ pipeline {
                 "$TRIVY_IMAGE" image \
                   --scanners vuln \
                   --severity CRITICAL,HIGH \
+                  --ignore-unfixed \
                   --ignorefile /.trivyignore \
                   --exit-code 1 \
                   --no-progress \
