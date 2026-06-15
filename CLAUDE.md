@@ -24,7 +24,13 @@
   ECR (instance profile) + a public registry** (likely Docker Hub; separate `modelmatch/jenkins/*`
   credential), immutable tags. **No GitOps bump / ArgoCD / kubectl / cluster deploy.** Changing the
   `/ci-setup` default (`DEFAULT_AGENT_IMAGE=docker.io/…:<tag>`) is a **backend** release via P18/GitOps,
-  not an agent deploy. See `../docs/planning/mentor-notes-2026-06-15.md` §8.
+  not an agent deploy. **Trigger:** a **separate multibranch job** on `Jenkinsfile.agent` — **no
+  long-lived `agent` branch**; the normal `feature/* → PR → main` model applies. The job wakes on
+  webhook/SCM events, then a first **`Detect agent changes`** stage skips (exits a green **`skipped`**,
+  not failure) unless an **agent-relevant** path changed (`agent/**`, `Jenkinsfile.agent`, agent build
+  files, dep lockfiles `pyproject.toml`/`uv.lock`, shared `app/llm/**` + CI-run/finding schema/client,
+  `tests/agent/**`) **or** `FORCE_AGENT_BUILD=true`. Feature/PR → build/test/Trivy only; `main` →
+  also publish. See `../docs/planning/mentor-notes-2026-06-15.md` §8.
 - **Auth:** register/login, JWT (argon2), owner-scoping. CI-run ingest authed by a **per-project
   token**, not the user JWT.
 
