@@ -19,7 +19,12 @@
 - **CI agent (`agent/`, the proof):** diff → AI code review via the **provider-agnostic `LLMClient`**
   (BYOK; adapters Bedrock·Anthropic·Gemini) → findings JSON + tokens → POST `/ci-runs`. Review +
   pass/fail **gate stay in CI**; never edits the repo. Built as a **second image** with its **own
-  pipeline** (`Jenkinsfile.agent`: source→build→test→package→publish, no cluster-deploy).
+  pipeline** (`Jenkinsfile.agent`, **P19**) — **publish-only, NOT an EKS workload** (it runs in a *user's*
+  Jenkins via `docker run`): source→build→test→**Trivy**→publish the **same tested digest** to **private
+  ECR (instance profile) + a public registry** (likely Docker Hub; separate `modelmatch/jenkins/*`
+  credential), immutable tags. **No GitOps bump / ArgoCD / kubectl / cluster deploy.** Changing the
+  `/ci-setup` default (`DEFAULT_AGENT_IMAGE=docker.io/…:<tag>`) is a **backend** release via P18/GitOps,
+  not an agent deploy. See `../docs/planning/mentor-notes-2026-06-15.md` §8.
 - **Auth:** register/login, JWT (argon2), owner-scoping. CI-run ingest authed by a **per-project
   token**, not the user JWT.
 
@@ -30,7 +35,7 @@ app/{api, models, schemas, recommend, ingest (#3), chat (#4), projects, ci, savi
      llm (LLMClient + adapters: bedrock / anthropic / gemini + fake)}
 agent/        (CI-agent image: diff → LLMClient review → findings JSON; shares app.llm + the findings contract)
 migrations/   (alembic; run as a Job/Helm hook, not on startup)
-tests/        (pytest + testcontainers; fake LLM + fixtures; gated test-llm-live)
+tests/        (unit: no containers · integration: testcontainers Postgres · all fake LLM + fixtures; live LLM only in the gated `e2e-live` E2E path on main/#e2e-live — see ../docs/planning/mentor-notes-2026-06-15.md)
 ```
 
 ## Rules
