@@ -101,7 +101,7 @@ pipeline {
             'AWS_DEFAULT_REGION', 'ECR_REGISTRY', 'ECR_REPO',
             'E2E_FRONTEND_REPO', 'E2E_FRONTEND_TAG',
             'UV_IMAGE', 'POSTGRES_IMAGE', 'PLAYWRIGHT_IMAGE', 'TRIVY_IMAGE', 'YQ_IMAGE',
-            'BE_REPO_SSH', 'GITOPS_REPO', 'GITOPS_VALUES',
+            'BE_REPO_SSH', 'GITOPS_REPO', 'GITOPS_VALUES', 'GITOPS_MIGRATE_VALUES',
             'CRED_BE_DEPLOY_KEY', 'CRED_GITOPS_KEY',
           ]
           def missing = required.findAll { !cfg.get(it) }
@@ -120,6 +120,7 @@ pipeline {
           env.BE_REPO_SSH        = cfg.get('BE_REPO_SSH')
           env.GITOPS_REPO        = cfg.get('GITOPS_REPO')
           env.GITOPS_VALUES      = cfg.get('GITOPS_VALUES')
+          env.GITOPS_MIGRATE_VALUES = cfg.get('GITOPS_MIGRATE_VALUES')
           env.CRED_BE_DEPLOY_KEY = cfg.get('CRED_BE_DEPLOY_KEY')
           env.CRED_GITOPS_KEY    = cfg.get('CRED_GITOPS_KEY')
 
@@ -441,8 +442,9 @@ pipeline {
         }
 
         stage('Deploy (gitops bump)') {
-          // The ONLY deploy action: bump backend.image.tag in the gitops umbrella and
-          // push. ArgoCD syncs from there. Never a hand kubectl/helm.
+          // The ONLY deploy action: bump the backend app image tag AND the migrate-job
+          // image tag in gitops, then push. ArgoCD syncs from there. Never a hand
+          // kubectl/helm.
           steps {
             withCredentials([sshUserPrivateKey(credentialsId: env.CRED_GITOPS_KEY,
                                                keyFileVariable: 'GITOPS_KEY',
@@ -455,15 +457,17 @@ pipeline {
                 cd gitops-deploy
                 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w "$YQ_IMAGE" \
                   eval -i ".backend.image.tag = \\"$RELEASE_VERSION\\"" "$GITOPS_VALUES"
-                if git diff --quiet -- "$GITOPS_VALUES"; then
-                  echo "gitops already at backend.image.tag=$RELEASE_VERSION — nothing to commit"
+                docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/w -w /w "$YQ_IMAGE" \
+                  eval -i ".migrate.image.tag = \\"$RELEASE_VERSION\\"" "$GITOPS_MIGRATE_VALUES"
+                if git diff --quiet -- "$GITOPS_VALUES" "$GITOPS_MIGRATE_VALUES"; then
+                  echo "gitops already at backend.image.tag and migrate.image.tag = $RELEASE_VERSION — nothing to commit"
                 else
                   git config user.email "jenkins@modelmatch.ci"
                   git config user.name  "modelmatch-jenkins"
-                  git add "$GITOPS_VALUES"
+                  git add "$GITOPS_VALUES" "$GITOPS_MIGRATE_VALUES"
                   git commit -m "deploy(backend): image tag -> $RELEASE_VERSION (build ${BUILD_NUMBER})"
                   git push origin HEAD:main
-                  echo "Bumped gitops backend.image.tag -> $RELEASE_VERSION"
+                  echo "Bumped gitops backend.image.tag + migrate.image.tag -> $RELEASE_VERSION"
                 fi
               '''
             }
