@@ -10,6 +10,7 @@ seams (`record_llm_call` = metrics + log; `record_llm_metrics` = metrics only).
 from app.observability.logging import (
     LLMObservation,
     build_log_record,
+    configure_logging,
     count_redactions,
     log_llm_call,
 )
@@ -17,6 +18,7 @@ from app.observability.logging import (
 __all__ = [
     "LLMObservation",
     "build_log_record",
+    "configure_logging",
     "count_redactions",
     "log_llm_call",
 ]

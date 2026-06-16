@@ -27,8 +27,14 @@ from app.api import (
 )
 from app.config import get_settings
 from app.db import check_db
+from app.observability import configure_logging
 from app.observability.http import MetricsMiddleware
 from app.observability.metrics import render_metrics
+
+# Route modelmatch.* logs to stdout at INFO so the per-request llm_call line actually
+# reaches the container's stdout for Fluent Bit/EFK (otherwise INFO is dropped). Runs at
+# import → once per gunicorn worker; idempotent.
+configure_logging()
 
 settings = get_settings()
 
