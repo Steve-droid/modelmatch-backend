@@ -23,9 +23,41 @@ import hashlib
 import json
 import logging
 import re
+import sys
 from dataclasses import dataclass
 
 logger = logging.getLogger("modelmatch.llm")
+
+# Marks the handler we attach in configure_logging so the call stays idempotent across
+# the (gunicorn) worker processes that each import app.main.
+_STDOUT_HANDLER_FLAG = "_modelmatch_stdout"
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    """Route the `modelmatch` logger namespace to container stdout at INFO.
+
+    Without this, the `modelmatch.llm` logger has no handler, so Python's last-resort
+    handler drops INFO records — the per-request `llm_call` line is emitted in code but
+    never reaches stdout, and Fluent Bit/EFK sees nothing. (Prometheus counters still
+    increment, which is why /metrics worked while Kibana would have stayed empty.)
+
+    - **Scoped to `modelmatch.*`** so uvicorn/gunicorn/third-party loggers are untouched.
+    - **Formatter `%(message)s`** so the `llm_call` message — already a JSON object —
+      lands on stdout as a pure JSON line Fluent Bit can parse field-by-field
+      (event/purpose/model/…).
+    - **Propagation left ON** (the default): in production the root logger emits no INFO
+      line (verified live — that's the bug this fixes), so there is no duplicate; and
+      leaving it on keeps pytest's `caplog` (a root handler) able to capture the line.
+    - **Idempotent**: each gunicorn worker imports app.main and calls this once; the
+      handler flag prevents stacking duplicate handlers.
+    """
+    base = logging.getLogger("modelmatch")
+    base.setLevel(level)
+    if not any(getattr(h, _STDOUT_HANDLER_FLAG, False) for h in base.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        setattr(handler, _STDOUT_HANDLER_FLAG, True)
+        base.addHandler(handler)
 
 # Secret/PII patterns. We never log the matched text — these are used only to COUNT how
 # many sensitive spans an input contained (a signal that something risky was passed),

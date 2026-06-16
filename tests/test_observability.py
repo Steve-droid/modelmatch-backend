@@ -145,6 +145,61 @@ def test_log_llm_call_emits_one_json_line(caplog):
 
 
 # ---------------------------------------------------------------------------
+# PRODUCTION LOG ROUTING (P23) — the line must reach stdout, not just caplog
+# ---------------------------------------------------------------------------
+# Regression guard for the EFK gap: log_llm_call emits the line in code, but with no
+# handler on the `modelmatch` logger Python's last-resort handler drops INFO, so the
+# line never reaches container stdout and Fluent Bit/EFK saw nothing. configure_logging
+# attaches a stdout handler so the JSON line is actually emitted. (caplog hid this bug
+# because it injects its own handler.)
+
+def test_configure_logging_routes_llm_call_to_stdout(capsys):
+    from app.observability import configure_logging
+
+    base = logging.getLogger("modelmatch")
+    # Drop any handler a prior app.main import attached so the fresh handler binds to
+    # capsys's stdout (configure_logging is idempotent — it won't re-add otherwise).
+    saved = base.handlers[:]
+    base.handlers.clear()
+    try:
+        configure_logging()
+        log_llm_call(
+            LLMObservation(purpose="chat", provider="bedrock",
+                           model="apac.amazon.nova-lite-v1:0",
+                           tokens_in=10, tokens_out=2)
+        )
+        out = capsys.readouterr().out
+    finally:
+        base.handlers[:] = saved
+
+    lines = [ln for ln in out.splitlines() if "llm_call" in ln]
+    assert lines, "the llm_call line did not reach stdout"
+    rec = json.loads(lines[-1])  # pure JSON line (formatter is %(message)s)
+    assert rec["event"] == "llm_call" and rec["purpose"] == "chat"
+    assert rec["model"] == "apac.amazon.nova-lite-v1:0"
+
+
+def test_configure_logging_is_idempotent_and_scoped():
+    from app.observability import configure_logging
+
+    base = logging.getLogger("modelmatch")
+    saved = base.handlers[:]
+    saved_level = base.level
+    base.handlers.clear()
+    try:
+        configure_logging()
+        configure_logging()  # second call must NOT stack a duplicate handler
+        flagged = [h for h in base.handlers if getattr(h, "_modelmatch_stdout", False)]
+        assert len(flagged) == 1
+        assert base.level == logging.INFO
+        # scoped to modelmatch.* — propagation stays on so caplog/root still see records
+        assert base.propagate is True
+    finally:
+        base.handlers[:] = saved
+        base.setLevel(saved_level)
+
+
+# ---------------------------------------------------------------------------
 # METRICS
 # ---------------------------------------------------------------------------
 
