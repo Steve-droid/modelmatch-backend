@@ -27,6 +27,7 @@ from app.api import (
 )
 from app.config import get_settings
 from app.db import check_db
+from app.observability.http import MetricsMiddleware
 from app.observability.metrics import render_metrics
 
 settings = get_settings()
@@ -40,6 +41,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last → outermost in the stack, so it times the full request (incl. CORS).
+app.add_middleware(MetricsMiddleware)
 
 app.include_router(auth.router)
 app.include_router(benchmarks.router)
@@ -94,7 +97,11 @@ def readyz(response: Response) -> dict[str, str]:
 
 @app.get("/metrics")
 def metrics() -> Response:
-    """Prometheus scrape target: per-LLM-call token counters + latency, labeled by
-    model + purpose (tokens, NOT dollars — Grafana applies the $/1k rate)."""
+    """Prometheus scrape target. Three families:
+    - HTTP: request count + duration by method/route/status (rate, latency, error rate);
+    - DB: query duration by SQL operation;
+    - LLM: per-call token counters + latency by model+purpose (tokens, NOT dollars —
+      Grafana applies the $/1k rate).
+    Aggregated across gunicorn workers when multiprocess mode is on."""
     payload, content_type = render_metrics()
     return Response(content=payload, media_type=content_type)

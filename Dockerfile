@@ -25,9 +25,12 @@ COPY --from=builder --chown=appuser:appuser /app /app
 # service), never on serve-startup. CMD below stays gunicorn-only.
 COPY --chown=appuser:appuser migrations ./migrations
 COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser gunicorn.conf.py ./
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
 EXPOSE 8000
-CMD ["gunicorn", "app.main:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "2", "--bind", "0.0.0.0:8000"]
+# Config lives in gunicorn.conf.py: workers/bind + the multiprocess wiring. The
+# PROMETHEUS_MULTIPROC_DIR env is set INSIDE that file (scoped to the gunicorn process
+# tree) — deliberately NOT an image-wide ENV, so `alembic upgrade head` on the SAME
+# image keeps the plain in-process registry instead of crashing on a missing mmap dir.
+CMD ["gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]
