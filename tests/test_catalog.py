@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from app.catalog import service
 from app.catalog.seed import load_seed
-from app.models import Benchmark, BenchmarkResult, Model
+from app.models import AgentRuntimeConfig, Benchmark, BenchmarkResult, Model
 from app.schemas.catalog import CatalogRowIn
 
 ROW = {
@@ -85,6 +85,38 @@ def test_seed_loads_idempotently(db_session):
     # models deduped across rows (Claude Haiku 4.5 appears twice: ci_review + agentic_coding)
     model_count = db_session.scalar(select(func.count()).select_from(Model))
     assert model_count == 7
+
+
+def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
+    load_seed(db_session)
+    load_seed(db_session)
+
+    rows = db_session.scalars(
+        select(AgentRuntimeConfig).join(Model).order_by(Model.vendor, Model.name)
+    ).all()
+    assert len(rows) == 3
+
+    by_model = {row.model.name: row for row in rows}
+    haiku = by_model["Claude Haiku 4.5"]
+    assert haiku.provider == "anthropic"
+    assert haiku.provider_model_id == "claude-haiku-4-5"
+    assert haiku.auth_mode == "api_key"
+    assert haiku.credential_env_var == "ANTHROPIC_API_KEY"
+    assert haiku.enabled is True
+
+    nova = by_model["Nova 2 Lite"]
+    assert nova.provider == "bedrock"
+    assert nova.provider_model_id == "global.amazon.nova-2-lite-v1:0"
+    assert nova.auth_mode == "aws_iam"
+    assert nova.credential_env_var is None
+    assert nova.enabled is True
+
+    gemini = by_model["Gemini 2.5 Flash"]
+    assert gemini.provider == "gemini"
+    assert gemini.provider_model_id == "gemini-2.5-flash"
+    assert gemini.auth_mode == "api_key"
+    assert gemini.credential_env_var == "GOOGLE_API_KEY"
+    assert gemini.enabled is True
 
 
 def test_null_harness_dedupes_via_nulls_not_distinct(db_session):

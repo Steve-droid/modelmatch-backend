@@ -25,6 +25,15 @@ class AgentConfig(BaseSettings):
     llm_client: str = Field(
         default="fake", validation_alias=AliasChoices("LLM_CLIENT", "AGENT_LLM_CLIENT")
     )
+    # Bedrock region. The generated Jenkins snippet exports the standard AWS env names
+    # (`AWS_DEFAULT_REGION` + `AWS_REGION`), but allow an explicit AGENT_AWS_REGION
+    # override for local/manual runs too.
+    aws_region: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENT_AWS_REGION", "AWS_DEFAULT_REGION", "AWS_REGION"
+        ),
+    )
     # Model id to call + report (e.g. claude-haiku-4 for the demo live run).
     model_id: str = Field(
         default="fake-model",

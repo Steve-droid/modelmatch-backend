@@ -151,7 +151,7 @@ Config is read from env via `pydantic-settings` (no hardcoded secrets/URLs). The
 | `LLM_CLIENT` | `fake` | **in-cluster** LLM surface: `fake` \| `bedrock` (Nova via IRSA) |
 | `LLM_HOURLY_TOKEN_CAP` | `200000` | hard hourly cap on our Nova spend — aborts (429) |
 | `BLOB_STORE` / `SECRET_STORE` | `fake` / `fake` | ingestion blob / secret-ref backends (`s3` / `aws` later) |
-| `CI_AGENT_LLM_CLIENT` / `CI_AGENT_MODEL` | `anthropic` / `claude-haiku-4-5` | provider + model baked into the CI snippet (BYOK; never `fake`) |
+| `CI_AGENT_MAX_TOKENS` / `CI_AGENT_TOKEN_CEILING` | `1024` / `20000` | per-run CI-agent output cap + total token ceiling |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | where the user's Jenkins POSTs `ci-runs` back |
 
 See the [runbook §9](docs/runbook.md#9-environment-variables) for the complete table (including the CI

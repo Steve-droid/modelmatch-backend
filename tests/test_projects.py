@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 
 from app.catalog.seed import load_seed
 from app.models import (
+    AgentRuntimeConfig,
     ChatMessage,
     CiFinding,
     CiRun,
@@ -23,6 +24,39 @@ from app.models import (
     RetrievalTrace,
     User,
 )
+
+
+def _runtime_config_for_option(db_session, option_id: int) -> AgentRuntimeConfig | None:
+    option = db_session.get(RecommendationOption, option_id)
+    assert option is not None
+    return db_session.scalar(
+        select(AgentRuntimeConfig).where(AgentRuntimeConfig.model_id == option.model_id)
+    )
+
+
+def _set_runtime_config_enabled(db_session, option_id: int, enabled: bool) -> None:
+    config = _runtime_config_for_option(db_session, option_id)
+    if config is None:
+        option = db_session.get(RecommendationOption, option_id)
+        config = AgentRuntimeConfig(
+            model_id=option.model_id,
+            provider="anthropic",
+            provider_model_id="disabled-test-model",
+            auth_mode="api_key",
+            credential_env_var="ANTHROPIC_API_KEY",
+            enabled=enabled,
+        )
+        db_session.add(config)
+    else:
+        config.enabled = enabled
+    db_session.commit()
+
+
+def _assert_runtime_config_422(resp) -> None:
+    assert resp.status_code == 422
+    detail = str(resp.json().get("detail", "")).lower()
+    assert "runtime" in detail and "config" in detail
+    assert "enabled" in detail
 
 
 def _register(client, db_session, email: str) -> tuple[dict[str, str], int]:
@@ -161,6 +195,24 @@ def test_create_with_unknown_baseline_model_404(client, db_session):
         "baselineModelId": 999999,
     }, headers=headers)
     assert resp.status_code == 404
+
+
+def test_create_rejects_selected_option_without_enabled_runtime_config(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "p_runtime_create@example.com")
+    pick = _make_pick(client, headers)
+    _set_runtime_config_enabled(db_session, pick["selected_option_id"], False)
+
+    resp = client.post("/projects", json={
+        "name": "no runtime",
+        "selectedOptionId": pick["selected_option_id"],
+        "baselineModelId": pick["baseline_model_id"],
+    }, headers=headers)
+
+    _assert_runtime_config_422(resp)
+    assert db_session.scalar(
+        select(func.count()).select_from(Project).where(Project.name == "no runtime")
+    ) == 0
 
 
 def test_create_with_blank_name_422(client, db_session):
@@ -338,6 +390,25 @@ def test_patch_unknown_baseline_404(client, db_session):
     pid = _create_project(client, headers, pick)["id"]
     resp = client.patch(f"/projects/{pid}", json={"baselineModelId": 999999}, headers=headers)
     assert resp.status_code == 404
+
+
+def test_patch_repick_rejects_option_without_enabled_runtime_config(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "p_patch_runtime@example.com")
+    pick = _make_pick(client, headers)
+    pid = _create_project(client, headers, pick)["id"]
+    replacement = _make_pick(client, headers)
+    _set_runtime_config_enabled(db_session, replacement["selected_option_id"], False)
+
+    resp = client.patch(
+        f"/projects/{pid}",
+        json={"selectedOptionId": replacement["selected_option_id"]},
+        headers=headers,
+    )
+
+    _assert_runtime_config_422(resp)
+    db_session.expire_all()
+    assert db_session.get(Project, pid).selected_option_id == pick["selected_option_id"]
 
 
 def test_patch_nonexistent_404(client, db_session):

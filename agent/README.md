@@ -45,6 +45,7 @@ git diff origin/main...HEAD | python -m agent
 | var | default | meaning |
 |---|---|---|
 | `LLM_CLIENT` | `fake` | provider seam: `fake` \| `anthropic` \| `gemini` \| `bedrock` |
+| `AGENT_AWS_REGION` | unset | optional Bedrock region override; otherwise the agent reads `AWS_DEFAULT_REGION` / `AWS_REGION` |
 | `AGENT_MODEL` | `fake-model` | model id to call + report (BYOK) |
 | `AGENT_MAX_TOKENS` | `1024` | per-call output cap |
 | `AGENT_TOKEN_CEILING` | `100000` | abort if estimated/actual tokens exceed (preflight + post-call) |
@@ -56,7 +57,7 @@ git diff origin/main...HEAD | python -m agent
 |---|---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` | BYOK; demo Haiku live / Sonnet computed |
 | `gemini` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | BYOK free-tier (`google-genai` SDK) — **non-confidential code only** (trains on inputs) |
-| `bedrock` | AWS creds via **IRSA** | in-cluster Nova; no static keys |
+| `bedrock` | AWS creds via IAM / profile | region from `AWS_DEFAULT_REGION` / `AWS_REGION`; no static keys |
 
 Real providers need the `llm` extra (in the image already; locally `uv sync --extra llm`).
 Live smoke: `RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py`.

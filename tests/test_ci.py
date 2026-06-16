@@ -21,7 +21,15 @@ from app.catalog.seed import load_seed
 from app.ci.service import AGENT_DIFF_ARG, build_review_snippet
 from app.ci.tokens import hash_token
 from app.llm.fake import FakeLLMClient
-from app.models import CiFinding, CiRun, JenkinsConnection, Project, RecommendationOption, User
+from app.models import (
+    AgentRuntimeConfig,
+    CiFinding,
+    CiRun,
+    JenkinsConnection,
+    Project,
+    RecommendationOption,
+    User,
+)
 from app.schemas.ci import MAX_FINDINGS, MAX_MESSAGE_LEN, MAX_TOKENS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +73,38 @@ def _connect_jenkins(client, headers, pid: int) -> None:
         },
         headers=headers,
     )
+
+
+def _set_project_runtime_config(
+    db_session,
+    pid: int,
+    *,
+    provider: str,
+    provider_model_id: str,
+    auth_mode: str,
+    credential_env_var: str | None,
+    enabled: bool = True,
+) -> None:
+    project = db_session.get(Project, pid)
+    assert project is not None
+    option = db_session.get(RecommendationOption, project.selected_option_id)
+    assert option is not None
+    config = db_session.scalar(
+        select(AgentRuntimeConfig).where(AgentRuntimeConfig.model_id == option.model_id)
+    )
+    values = {
+        "provider": provider,
+        "provider_model_id": provider_model_id,
+        "auth_mode": auth_mode,
+        "credential_env_var": credential_env_var,
+        "enabled": enabled,
+    }
+    if config is None:
+        db_session.add(AgentRuntimeConfig(model_id=option.model_id, **values))
+    else:
+        for key, value in values.items():
+            setattr(config, key, value)
+    db_session.commit()
 
 
 def _mint_token(client, headers, pid: int) -> str:
@@ -386,6 +426,14 @@ def test_snippet_wires_real_provider_and_never_runs_fake(client, db_session):
     load_seed(db_session)
     headers, _ = _register(client, db_session, "ci_prov@example.com")
     pid = _make_project(client, headers)
+    _set_project_runtime_config(
+        db_session,
+        pid,
+        provider="anthropic",
+        provider_model_id="claude-haiku-4-5",
+        auth_mode="api_key",
+        credential_env_var="ANTHROPIC_API_KEY",
+    )
     _connect_jenkins(client, headers, pid)
     snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
 
@@ -399,6 +447,99 @@ def test_snippet_wires_real_provider_and_never_runs_fake(client, db_session):
     assert "-e ANTHROPIC_API_KEY \\" in snippet
     assert 'ANTHROPIC_API_KEY="$' not in snippet        # no value expansion in argv
     assert "$MODELMATCH_MODEL_API_KEY" not in snippet
+
+
+def test_ci_setup_uses_selected_model_runtime_config_not_global_fallback(
+    client, db_session, monkeypatch
+):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_runtime_db@example.com")
+    pid = _make_project(client, headers)
+    _set_project_runtime_config(
+        db_session,
+        pid,
+        provider="anthropic",
+        provider_model_id="claude-from-db-runtime",
+        auth_mode="api_key",
+        credential_env_var="ANTHROPIC_API_KEY",
+    )
+    _connect_jenkins(client, headers, pid)
+    monkeypatch.setenv("CI_AGENT_LLM_CLIENT", "gemini")
+    monkeypatch.setenv("CI_AGENT_MODEL", "gemini-global-fallback")
+
+    snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
+
+    assert "LLM_CLIENT=anthropic" in snippet
+    assert "AGENT_MODEL=claude-from-db-runtime" in snippet
+    assert "LLM_CLIENT=gemini" not in snippet
+    assert "gemini-global-fallback" not in snippet
+
+
+def test_ci_setup_bedrock_runtime_config_uses_nova_without_byok_key(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_runtime_bedrock@example.com")
+    pid = _make_project(client, headers)
+    _set_project_runtime_config(
+        db_session,
+        pid,
+        provider="bedrock",
+        provider_model_id="global.amazon.nova-2-lite-v1:0",
+        auth_mode="aws_iam",
+        credential_env_var=None,
+    )
+    _connect_jenkins(client, headers, pid)
+
+    snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
+
+    assert "LLM_CLIENT=bedrock" in snippet
+    assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
+    assert "AWS_DEFAULT_REGION=" in snippet
+    assert "AWS_REGION=" in snippet
+    assert "modelmatch-model-api-key" not in snippet
+    assert "ANTHROPIC_API_KEY" not in snippet
+    assert "GEMINI_API_KEY" not in snippet
+    assert "GOOGLE_API_KEY" not in snippet
+
+
+@pytest.mark.parametrize(
+    "provider,provider_model_id,credential_env_var,absent_env",
+    [
+        ("anthropic", "claude-runtime-from-db", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"),
+        ("gemini", "gemini-runtime-from-db", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"),
+    ],
+)
+def test_ci_setup_api_key_runtime_configs_bind_provider_env_by_name(
+    client,
+    db_session,
+    provider,
+    provider_model_id,
+    credential_env_var,
+    absent_env,
+):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, f"ci_runtime_{provider}@example.com")
+    pid = _make_project(client, headers)
+    _set_project_runtime_config(
+        db_session,
+        pid,
+        provider=provider,
+        provider_model_id=provider_model_id,
+        auth_mode="api_key",
+        credential_env_var=credential_env_var,
+    )
+    _connect_jenkins(client, headers, pid)
+
+    snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
+
+    assert f"LLM_CLIENT={provider}" in snippet
+    assert f"AGENT_MODEL={provider_model_id}" in snippet
+    assert f"{credential_env_var} = credentials('modelmatch-model-api-key')" in snippet
+    assert f"-e {credential_env_var} \\" in snippet
+    assert f'{credential_env_var}="$' not in snippet
+    assert f"-e {credential_env_var}=$" not in snippet
+    assert absent_env not in snippet
+    if provider == "gemini":
+        assert "GEMINI_API_KEY" not in snippet
 
 
 def test_snippet_keeps_ci_token_out_of_argv(client, db_session):
@@ -442,35 +583,12 @@ def test_bedrock_snippet_uses_aws_creds_not_an_api_key():
         aws_region="ap-south-1",
     )
     assert "LLM_CLIENT=bedrock" in snippet and "LLM_CLIENT=fake" not in snippet
+    assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
+    assert "AWS_DEFAULT_REGION=ap-south-1" in snippet
     assert "AWS_REGION=ap-south-1" in snippet
     assert "modelmatch-model-api-key" not in snippet  # no static key credential
-    assert "ANTHROPIC_API_KEY" not in snippet and "GOOGLE_API_KEY" not in snippet
-
-
-@pytest.mark.parametrize("bad", ["fake", "openai", "Fake", "anthropic ", "claude", ""])
-def test_config_rejects_invalid_agent_provider(monkeypatch, bad):
-    """CI_AGENT_LLM_CLIENT must be exactly anthropic|gemini|bedrock — reject the rest."""
-    from pydantic import ValidationError
-
-    from app.config import Settings
-
-    monkeypatch.setenv("JWT_SECRET", "test-only-secret-not-for-prod-0123456789")
-    monkeypatch.setenv("CI_AGENT_LLM_CLIENT", bad)
-    if bad == "anthropic ":  # whitespace is trimmed + accepted, not rejected
-        assert Settings().ci_agent_llm_client == "anthropic"
-        return
-    with pytest.raises(ValidationError):
-        Settings()
-
-
-@pytest.mark.parametrize("value,expected", [("anthropic", "anthropic"), ("Bedrock", "bedrock"), ("GEMINI", "gemini")])
-def test_config_normalizes_agent_provider(monkeypatch, value, expected):
-    """The provider is normalized to lowercase."""
-    from app.config import Settings
-
-    monkeypatch.setenv("JWT_SECRET", "test-only-secret-not-for-prod-0123456789")
-    monkeypatch.setenv("CI_AGENT_LLM_CLIENT", value)
-    assert Settings().ci_agent_llm_client == expected
+    assert "ANTHROPIC_API_KEY" not in snippet
+    assert "GEMINI_API_KEY" not in snippet and "GOOGLE_API_KEY" not in snippet
 
 
 # --- untrusted-input validation (ABC: LLM output is untrusted) ------------

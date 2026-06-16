@@ -19,6 +19,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent_runtime import require_enabled_runtime_config, runtime_config_error
 from app.auth.deps import require_owner
 from app.ci.tokens import hash_token, mint_token
 from app.config import get_settings
@@ -56,38 +57,40 @@ CI_TOKEN_CRED_ID = "modelmatch-ci-token"
 MODEL_KEY_CRED_ID = "modelmatch-model-api-key"
 
 
-def _provider_wiring(llm_client: str, aws_region: str) -> tuple[str, str, str]:
+def _provider_wiring(
+    *, auth_mode: str, credential_env_var: str | None, aws_region: str
+) -> tuple[str, str, str]:
     """Map a provider to its Jenkins credential binding + `docker run` env flags.
 
-    BYOK (anthropic/gemini): the model API key is a Jenkins 'Secret text' credential
-    bound DIRECTLY to the provider's SDK env var, then passed to docker BY NAME
-    (`-e VAR`, no value) so the secret never appears in the docker argv. Bedrock: no
-    static key — the agent uses the node's AWS credentials (EC2 instance role or a
-    mounted ~/.aws profile). Returns (environment-block lines, docker-run flag lines,
-    a leading shell comment).
+    API-key providers bind the Jenkins Secret text credential directly to the
+    provider SDK env var, then pass it to docker BY NAME (`-e VAR`, no value) so the
+    secret never appears in argv. AWS IAM uses the node's AWS credentials/profile and
+    carries no model-key binding. Returns (environment-block lines, docker-run flag
+    lines, a leading shell comment).
     """
-    client = llm_client.lower()
-    if client == "bedrock":
+    if auth_mode == "aws_iam":
         env_block = ""  # no model-key credential for Bedrock
         run_flags = (
+            f"        -e AWS_DEFAULT_REGION={aws_region} \\\n"
             f"        -e AWS_REGION={aws_region} \\\n"  # region is not a secret
             '        -v "$HOME/.aws:/home/appuser/.aws:ro" \\\n'
         )
         note = (
             "# Bedrock: the agent uses this node's AWS credentials (an EC2 instance\n"
             "        # role, or the mounted ~/.aws profile) — no API key. The role/profile\n"
-            "        # must allow bedrock:InvokeModel / Converse in $AWS_REGION.\n        "
+            "        # must allow bedrock:InvokeModel / Converse in $AWS_DEFAULT_REGION.\n        "
         )
         return env_block, run_flags, note
 
-    key_env = "GOOGLE_API_KEY" if client == "gemini" else "ANTHROPIC_API_KEY"
+    if auth_mode != "api_key" or not credential_env_var:
+        raise ValueError("api_key runtime configs must declare credential_env_var")
     # Bind the credential straight to the SDK's env var name — then pass it to docker
     # by name (no value in argv). The secret stays in the Jenkins-managed env only.
     env_block = (
         f"    // BYOK model key — add a 'Secret text' credential id '{MODEL_KEY_CRED_ID}'.\n"
-        f"    {key_env} = credentials('{MODEL_KEY_CRED_ID}')\n"
+        f"    {credential_env_var} = credentials('{MODEL_KEY_CRED_ID}')\n"
     )
-    run_flags = f"        -e {key_env} \\\n"  # by NAME, not value
+    run_flags = f"        -e {credential_env_var} \\\n"  # by NAME, not value
     return env_block, run_flags, ""
 
 
@@ -100,6 +103,8 @@ def build_review_snippet(
     max_tokens: int,
     token_ceiling: int,
     aws_region: str,
+    auth_mode: str | None = None,
+    credential_env_var: str | None = None,
 ) -> str:
     """A Jenkins declarative stage that runs the agent IMAGE on the PR diff and POSTs
     results back. Runs on a normal node (needs docker, git, jq, curl) and invokes the
@@ -117,7 +122,11 @@ def build_review_snippet(
     the result regardless (the backend keeps the audit record), then propagate the
     gate as the build status — review + gate stay in CI, ingest still happens.
     """
-    env_block, cred_flags, note = _provider_wiring(llm_client, aws_region)
+    env_block, cred_flags, note = _provider_wiring(
+        auth_mode=auth_mode or ("aws_iam" if llm_client == "bedrock" else "api_key"),
+        credential_env_var=credential_env_var,
+        aws_region=aws_region,
+    )
     return f"""// Runs on a normal Jenkins node (needs: docker, git, jq, curl).
 stage('ModelMatch AI Review') {{
   agent any
@@ -171,19 +180,31 @@ def _require_connected(db: Session, project_id: int, current_user: User) -> Jenk
     return conn
 
 
-def _setup_out(project_id: int, token_plain: str | None) -> CiSetupOut:
+def _selected_runtime_config(db: Session, project: Project):
+    if project.selected_option_id is None:
+        raise runtime_config_error()
+    option = db.get(RecommendationOption, project.selected_option_id)
+    if option is None:
+        raise runtime_config_error()
+    return require_enabled_runtime_config(db, option.model_id, option.model.name)
+
+
+def _setup_out(project: Project, token_plain: str | None, db: Session) -> CiSetupOut:
     """Build the snippet + ingest URL (the stable parts); `token_plain` is non-None
     only when a token was just minted/rotated (never re-shown otherwise)."""
     settings = get_settings()
-    ci_runs_url = f"{settings.public_base_url}/projects/{project_id}/ci-runs"
+    runtime = _selected_runtime_config(db, project)
+    ci_runs_url = f"{settings.public_base_url}/projects/{project.id}/ci-runs"
     snippet = build_review_snippet(
         ci_runs_url=ci_runs_url,
         image_ref=settings.agent_image,
-        llm_client=settings.ci_agent_llm_client,
-        model=settings.ci_agent_model,
+        llm_client=runtime.provider,
+        model=runtime.provider_model_id,
         max_tokens=settings.ci_agent_max_tokens,
         token_ceiling=settings.ci_agent_token_ceiling,
         aws_region=settings.aws_region,
+        auth_mode=runtime.auth_mode,
+        credential_env_var=runtime.credential_env_var,
     )
     return CiSetupOut(
         snippet=snippet,
@@ -195,6 +216,7 @@ def _setup_out(project_id: int, token_plain: str | None) -> CiSetupOut:
 
 def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
     conn = _require_connected(db, project_id, current_user)
+    project = db.get(Project, project_id)
 
     # Mint-once: issue a token only if none exists yet (we keep only the hash, so a
     # previously-minted token is never re-shown here — use rotate_ci_token to recover
@@ -205,7 +227,7 @@ def ci_setup(db: Session, project_id: int, current_user: User) -> CiSetupOut:
         conn.ci_token_hash = hash_token(token_plain)  # store the hash, never plaintext
         db.commit()
 
-    return _setup_out(project_id, token_plain)
+    return _setup_out(project, token_plain, db)
 
 
 def rotate_ci_token(db: Session, project_id: int, current_user: User) -> CiSetupOut:
@@ -214,10 +236,11 @@ def rotate_ci_token(db: Session, project_id: int, current_user: User) -> CiSetup
     can't be re-shown) — the old token stops working immediately. Owner-scoped; needs
     an existing Jenkins connection."""
     conn = _require_connected(db, project_id, current_user)
+    project = db.get(Project, project_id)
     token_plain = mint_token()
     conn.ci_token_hash = hash_token(token_plain)
     db.commit()
-    return _setup_out(project_id, token_plain)
+    return _setup_out(project, token_plain, db)
 
 
 def _resolve_model_id(db: Session, project: Project) -> int | None:
