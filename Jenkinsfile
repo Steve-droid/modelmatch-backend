@@ -62,6 +62,9 @@ pipeline {
 
   options {
     timestamps() // requires the Timestamper plugin on the controller
+    // Do our OWN explicit clean checkout below (CleanBeforeCheckout) instead of Jenkins'
+    // implicit one — a stale workspace can't poison the build/test/compose stages.
+    skipDefaultCheckout true
     // E2E brings up a compose stack and the release tail pushes a git tag — serialize
     // builds of this branch so neither races itself. (Cross-branch isolation comes from
     // the globally-unique RUN_ID below.)
@@ -73,7 +76,15 @@ pipeline {
   stages {
     stage('Source + config') {
       steps {
-        checkout scm // Multibranch provides the BE read deploy key for the checkout
+        // Explicit CLEAN checkout (Roey): CleanBeforeCheckout wipes the workspace first so
+        // no stale file survives across builds. scm.branches/userRemoteConfigs reuse the
+        // Multibranch job's branch + the BE read deploy key (GitHub Multibranch-safe).
+        checkout([
+          $class: 'GitSCM',
+          branches: scm.branches,
+          extensions: [[$class: 'CleanBeforeCheckout']],
+          userRemoteConfigs: scm.userRemoteConfigs,
+        ])
         script {
           // Load stable non-secret CI config from the repo. Parse into a Map with a
           // sandbox-safe map literal (collectEntries — no dynamic putAt), then assign env

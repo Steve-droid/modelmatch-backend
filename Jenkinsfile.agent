@@ -1,0 +1,488 @@
+// modelmatch-agent CI pipeline (P19 — the agent image: the product's PROOF).
+//
+// Builds + publishes the modelmatch-agent image (the BYOK CI code-review agent users
+// `docker run` in their OWN Jenkins). It is PUBLISH-ONLY and DEPLOYS NOTHING: the agent
+// is NOT an EKS workload, so there is NO gitops bump / ArgoCD / kubectl / helm / cluster
+// stage anywhere in this file. That hard line is what makes P19 different from P17/P18.
+//
+// Runs as a SEPARATE Multibranch job (this Jenkinsfile.agent), alongside the backend job
+// (Jenkinsfile) on the SAME repo + the SAME webhook. Shape:
+//
+//   Source + config      -> checkout + load ci/pipeline.agent.env
+//   Detect agent changes -> the GATE (source of truth, not Jenkins path filters):
+//                           no agent-relevant path changed AND !FORCE_AGENT_BUILD ->
+//                           exits a GREEN `skipped` (every later stage is `when` it),
+//                           so a non-agent PR's agent check is green, never blocking.
+//   Build (uv sync)      -> the --extra llm venv (anthropic/gemini/boto3 — the shipped set)
+//   Static/dep gate      -> Bandit SAST (app+agent) + pip-audit over the --extra llm deps
+//   Test                 -> the offline unit suite (fake LLM, NO containers)
+//   Package              -> build the agent image ONCE (docker build -f agent/Dockerfile .)
+//   Trivy                -> gate CRITICAL+HIGH (--ignore-unfixed, documented .trivyignore)
+//   [main] Tag           -> annotated `agent-vX.Y.Z` (distinct from the backend's vX.Y.Z)
+//   [main] Publish       -> push the SAME tested digest to BOTH registries, immutable tags:
+//                           (a) private ECR  modelmatch-agent     via the INSTANCE PROFILE
+//                           (b) Docker Hub   stevelevit/modelmatch-agent via CRED_DOCKERHUB
+//                           tags: <sha> + <X.Y.Z> (immutable) + a moving :demo.
+//
+// Agent-relevant feature/PR builds run Build->...->Trivy (no publish); only `main` runs
+// the Tag+Publish tail. FORCE_AGENT_BUILD=true overrides the skip (base-image refresh,
+// dep rebuild, demo recovery).
+//
+// Identities (NO static AWS keys; creds referenced by ID only):
+//   * EC2 instance role  modelmatch-jenkins-role  -> ECR login/push (no keys on the box).
+//   * backend-read-key   (READ)  -> fetch origin/main for change detection.
+//   * backend-deploy-key (WRITE) -> push the annotated agent SemVer tag (main tail only).
+//   * dockerhub cred (user+token) -> docker login Docker Hub for the public push. NEVER
+//     AWS IAM for Docker Hub; NEVER a registry token in this file.
+// Stable non-secret delivery config lives in ci/pipeline.agent.env (loaded + validated
+// below). uv/Trivy run as pinned throwaway containers — the box has Docker, not a
+// Python toolchain — `sh`/`docker` over plugins, per the controller plan.
+
+// Make an id safe for docker tags AND names: lowercase, decode %2F, map every other
+// unsafe char to '-', collapse repeats, trim, and bound the length. (Same as the BE job.)
+def sanitizeId(String s) {
+  String out = s.toLowerCase().replace('%2f', '-')
+  out = out.replaceAll('[^a-z0-9_-]', '-').replaceAll('-+', '-')
+  out = out.replaceAll('^[-_]+', '').replaceAll('[-_]+$', '')
+  return out
+}
+
+// Run a uv/python command inside the pinned uv container with the Jenkins workspace
+// mounted, so the .venv built by `uv sync` (Build) persists across the Python stages.
+// Runs as the Jenkins uid so files stay cleanable; HOME + uv cache point at /tmp.
+def runUv(String cmd) {
+  sh """
+    docker run --rm \\
+      -u \$(id -u):\$(id -g) \\
+      -e HOME=/tmp -e UV_CACHE_DIR=/tmp/.uv-cache \\
+      -v "\$WORKSPACE":/work -w /work \\
+      "\$UV_IMAGE" \\
+      bash -lc '${cmd}'
+  """
+}
+
+// The change-detection gate's source of truth: do any changed files touch an
+// AGENT-RELEVANT path? The agent shares app.llm + app.observability + the findings
+// contract with the backend, and the CI-run schema/client is part of its output
+// contract, so all of those count (per the P19 trigger note). Conservative by design:
+// '__ALL__' (base undeterminable) is treated as relevant — when in doubt, build.
+boolean isAgentRelevant(String changed) {
+  if (changed == '__ALL__') { return true }
+  List<String> files = changed.split('\n').findAll { it?.trim() }
+  return files.any { String f ->
+    f == 'Jenkinsfile.agent' ||
+    f == 'ci/pipeline.agent.env' ||
+    f == 'pyproject.toml' ||
+    f == 'uv.lock' ||
+    f == 'app/schemas/findings.py' ||
+    f == 'app/schemas/ci.py' ||
+    f == 'tests/test_agent_review.py' ||
+    f.startsWith('agent/') ||
+    f.startsWith('app/llm/') ||
+    f.startsWith('app/observability/') ||
+    f.startsWith('app/ci/')
+  }
+}
+
+pipeline {
+  agent any
+
+  parameters {
+    // Manual override: build/test/scan (and publish on main) even when no agent-relevant
+    // path changed — base-image refresh, dependency rebuild, demo recovery.
+    booleanParam(name: 'FORCE_AGENT_BUILD', defaultValue: false,
+                 description: 'Build the agent image even when no agent-relevant path changed (override the skip).')
+  }
+
+  options {
+    timestamps() // requires the Timestamper plugin on the controller
+    // Do our OWN explicit clean checkout below (CleanBeforeCheckout) instead of Jenkins'
+    // implicit one — a stale workspace can't poison change-detection or the image build.
+    skipDefaultCheckout true
+    // The Tag tail pushes a git tag and Publish pushes images — serialize this branch's
+    // builds so neither races itself. (Cross-branch isolation via the unique RUN_ID.)
+    disableConcurrentBuilds()
+    timeout(time: 30, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
+  stages {
+    stage('Source + config') {
+      steps {
+        // Explicit CLEAN checkout (Roey): CleanBeforeCheckout wipes the workspace first so
+        // no stale file survives across builds. scm.branches/userRemoteConfigs reuse the
+        // Multibranch job's branch + the BE read deploy key (GitHub Multibranch-safe).
+        checkout([
+          $class: 'GitSCM',
+          branches: scm.branches,
+          extensions: [[$class: 'CleanBeforeCheckout']],
+          userRemoteConfigs: scm.userRemoteConfigs,
+        ])
+        script {
+          // Load stable non-secret CI config from the repo. Parse into a Map with a
+          // sandbox-safe map literal (collectEntries — no dynamic putAt), then assign env
+          // by EXPLICIT property; the CPS sandbox rejects dynamic env[k]=v.
+          Map cfg = readFile('ci/pipeline.agent.env').readLines()
+            .findAll { String l -> l.trim() && !l.trim().startsWith('#') && l.contains('=') }
+            .collectEntries { String l ->
+              int i = l.indexOf('=')
+              [(l.substring(0, i).trim()): l.substring(i + 1).trim()]
+            }
+          def required = [
+            'AWS_DEFAULT_REGION', 'ECR_REGISTRY', 'AGENT_ECR_REPO',
+            'DOCKERHUB_REGISTRY', 'DOCKERHUB_REPO', 'DEMO_TAG',
+            'UV_IMAGE', 'TRIVY_IMAGE', 'BE_REPO_SSH',
+            'CRED_BE_READ_KEY', 'CRED_BE_DEPLOY_KEY', 'CRED_DOCKERHUB',
+          ]
+          def missing = required.findAll { !cfg.get(it) }
+          if (missing) { error "ci/pipeline.agent.env missing required keys: ${missing.join(', ')}" }
+
+          env.AWS_DEFAULT_REGION = cfg.get('AWS_DEFAULT_REGION')
+          env.ECR_REGISTRY       = cfg.get('ECR_REGISTRY')
+          env.AGENT_ECR_REPO     = cfg.get('AGENT_ECR_REPO')
+          env.DOCKERHUB_REGISTRY = cfg.get('DOCKERHUB_REGISTRY')
+          env.DOCKERHUB_REPO     = cfg.get('DOCKERHUB_REPO')
+          env.DEMO_TAG           = cfg.get('DEMO_TAG')
+          env.UV_IMAGE           = cfg.get('UV_IMAGE')
+          env.TRIVY_IMAGE        = cfg.get('TRIVY_IMAGE')
+          env.BE_REPO_SSH        = cfg.get('BE_REPO_SSH')
+          env.CRED_BE_READ_KEY   = cfg.get('CRED_BE_READ_KEY')
+          env.CRED_BE_DEPLOY_KEY = cfg.get('CRED_BE_DEPLOY_KEY')
+          env.CRED_DOCKERHUB     = cfg.get('CRED_DOCKERHUB')
+
+          // Globally-unique run id (BUILD_NUMBER is per-BRANCH, not global in Multibranch).
+          String job = sanitizeId(env.JOB_NAME)
+          if (job.length() > 50) { job = job.substring(0, 50).replaceAll('[-_]+$', '') }
+          String gc = env.GIT_COMMIT ?: 'nogit'
+          env.GIT_SHA = gc.length() >= 7 ? gc.substring(0, 7) : gc  // short — RUN_ID + displayName
+          env.GIT_SHA_FULL = gc                                     // full — the PUBLIC immutable image tag
+          env.RUN_ID = "${job}-${env.BUILD_NUMBER}-${env.GIT_SHA}"
+          env.IMAGE_CANDIDATE = "candidate-${env.RUN_ID}"
+
+          sh 'git --no-pager log -1 --oneline; echo "Branch: ${BRANCH_NAME}  RunId: ${RUN_ID}  forceBuild: ${FORCE_AGENT_BUILD}"'
+        }
+      }
+    }
+
+    stage('Detect agent changes') {
+      // THE GATE. Decides AGENT_SKIP; every build/test/publish stage below is `when` it.
+      // A `skipped` build is SUCCESS (green) — non-agent PRs are never blocked.
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: env.CRED_BE_READ_KEY,
+                                           keyFileVariable: 'RKEY',
+                                           usernameVariable: 'RUSER')]) {
+          script {
+            if (params.FORCE_AGENT_BUILD) {
+              env.AGENT_SKIP = 'false'
+              echo 'FORCE_AGENT_BUILD=true → building regardless of changed paths.'
+            } else {
+              // Compute changed files relative to the right base:
+              //   main          -> HEAD~1..HEAD (what this push/merge introduced)
+              //   feature branch -> merge-base(origin/main, HEAD)..HEAD (what the branch changed)
+              // '__ALL__' = base undeterminable (first commit / no merge-base) -> treat as changed.
+              String changed = sh(returnStdout: true, script: '''
+                set -eu
+                export GIT_SSH_COMMAND="ssh -i $RKEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+                git remote set-url origin "$BE_REPO_SSH"
+                git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1 || true
+                if [ "${BRANCH_NAME}" = "main" ]; then
+                  if git rev-parse -q --verify HEAD~1 >/dev/null 2>&1; then
+                    BASE=$(git rev-parse HEAD~1)
+                  else
+                    BASE=""
+                  fi
+                else
+                  BASE=$(git merge-base origin/main HEAD 2>/dev/null || true)
+                fi
+                if [ -z "$BASE" ]; then
+                  echo "__ALL__"
+                else
+                  git diff --name-only "$BASE" HEAD
+                fi
+              ''').trim()
+
+              boolean relevant = isAgentRelevant(changed)
+              env.AGENT_SKIP = relevant ? 'false' : 'true'
+              if (relevant) {
+                echo "Agent-relevant change detected → building.\nChanged files:\n${changed}"
+              } else {
+                echo "No agent-relevant change (FORCE_AGENT_BUILD=false) → SKIPPED (green).\nChanged files:\n${changed}"
+                currentBuild.description = 'agent: skipped (no agent-relevant change)'
+                currentBuild.result = 'SUCCESS'
+              }
+            }
+          }
+        }
+      }
+    }
+
+    stage('Build (uv sync, --extra llm)') {
+      // Resolve the locked deps into a workspace .venv once — the FULL BYOK provider set
+      // (anthropic/gemini/boto3) the agent image ships, plus dev tools (bandit/pip-audit/
+      // pytest). Later stages reuse it with --no-sync.
+      when { expression { env.AGENT_SKIP != 'true' } }
+      steps { runUv('uv sync --frozen --extra llm') }
+    }
+
+    stage('Static/dep gate (Bandit + pip-audit)') {
+      when { expression { env.AGENT_SKIP != 'true' } }
+      steps {
+        // Bandit SAST over our code (app + agent). HARD gate on HIGH severity AND HIGH
+        // confidence (documented threshold); pyproject excludes tests/fixtures.
+        runUv('uv run --no-sync bandit -r app agent --severity-level high --confidence-level high -q')
+        // pip-audit over the AGENT's runtime dependency set (--extra llm: the superset
+        // the image actually ships). Remediate-not-waive: any advisory fails the gate.
+        runUv('uv export --frozen --no-dev --extra llm --format requirements-txt --no-emit-project -o /tmp/req.txt && uv run --no-sync pip-audit -r /tmp/req.txt --progress-spinner=off')
+      }
+    }
+
+    stage('Test (unit, no containers, fake LLM)') {
+      // The offline unit suite: the agent itself + everything it imports (app.llm
+      // adapters, the findings contract, observability). `-m "not integration"` needs no
+      // Postgres; fake LLM (the offline default) — zero tokens.
+      when { expression { env.AGENT_SKIP != 'true' } }
+      steps { runUv('LLM_CLIENT=fake uv run --no-sync pytest -m "not integration" -q') }
+    }
+
+    stage('Package (agent image)') {
+      // Build the artifact ONCE, from the repo root with -f agent/Dockerfile (the
+      // Dockerfile needs app/ + agent/ + pyproject.toml/uv.lock as context). Tagged with
+      // the per-build candidate tag; promoted to the published tags only in the main tail.
+      when { expression { env.AGENT_SKIP != 'true' } }
+      steps {
+        sh 'docker build -f agent/Dockerfile -t "$ECR_REGISTRY/$AGENT_ECR_REPO:$IMAGE_CANDIDATE" .'
+      }
+    }
+
+    stage('Trivy image scan') {
+      // Gate on CRITICAL + HIGH that HAVE A FIX (--ignore-unfixed): remediate-not-waive
+      // for anything actionable; unfixed base-OS advisories don't permanently block.
+      // .trivyignore.agent (agent-specific, NOT the backend's) holds documented per-CVE
+      // waivers (currently none).
+      when { expression { env.AGENT_SKIP != 'true' } }
+      steps {
+        sh '''
+          set -eu
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$WORKSPACE/.trivyignore.agent":/.trivyignore:ro \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln \
+              --severity CRITICAL,HIGH \
+              --ignore-unfixed \
+              --ignorefile /.trivyignore \
+              --exit-code 1 \
+              --no-progress \
+              "$ECR_REGISTRY/$AGENT_ECR_REPO:$IMAGE_CANDIDATE"
+        '''
+      }
+    }
+
+    // ===================== PUBLISH tail (main only) =====================
+    // Publish-only. NO gitops bump / ArgoCD / kubectl / helm — the agent is not deployed.
+
+    stage('Tag (agent SemVer)') {
+      // Compute the next agent SemVer from `agent-v*` git tags (DISTINCT from the backend
+      // pipeline's `v*` tags on this same repo) and create an ANNOTATED tag on HEAD.
+      // Idempotent: already tagged on this commit -> reuse; the computed tag on a
+      // DIFFERENT commit -> fail. Uses the BE WRITE key.
+      when { allOf { branch 'main'; expression { env.AGENT_SKIP != 'true' } } }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: env.CRED_BE_DEPLOY_KEY,
+                                           keyFileVariable: 'BE_KEY',
+                                           usernameVariable: 'BE_USER')]) {
+          script {
+            env.RELEASE_VERSION = sh(returnStdout: true, script: '''
+              set -eu
+              export GIT_SSH_COMMAND="ssh -i $BE_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+              git remote set-url origin "$BE_REPO_SSH"
+              git fetch --tags --force origin >/dev/null 2>&1
+              HEAD_SHA=$(git rev-parse HEAD^{commit})
+
+              # already tagged on THIS commit -> idempotent reuse, no new tag
+              EXISTING=$(git tag --points-at HEAD | grep -E "^agent-v[0-9]+\\.[0-9]+\\.[0-9]+$" | sort -V | tail -1 || true)
+              if [ -n "$EXISTING" ]; then
+                echo "idempotent: HEAD already tagged $EXISTING" >&2
+                printf "%s" "${EXISTING#agent-v}"; exit 0
+              fi
+
+              # next = bump patch of the highest existing agent-vX.Y.Z (or agent-v0.0.1 if none)
+              LATEST=$(git tag -l "agent-v*" | grep -E "^agent-v[0-9]+\\.[0-9]+\\.[0-9]+$" | sort -V | tail -1 || true)
+              if [ -z "$LATEST" ]; then
+                NEXT="agent-v0.0.1"
+              else
+                MJ=$(echo "$LATEST" | sed -E "s/^agent-v([0-9]+)\\.([0-9]+)\\.([0-9]+)$/\\1/")
+                MI=$(echo "$LATEST" | sed -E "s/^agent-v([0-9]+)\\.([0-9]+)\\.([0-9]+)$/\\2/")
+                PA=$(echo "$LATEST" | sed -E "s/^agent-v([0-9]+)\\.([0-9]+)\\.([0-9]+)$/\\3/")
+                NEXT="agent-v${MJ}.${MI}.$((PA + 1))"
+              fi
+
+              # guard: NEXT must not already exist on a DIFFERENT commit
+              if git rev-parse -q --verify "refs/tags/${NEXT}" >/dev/null 2>&1; then
+                TAGGED=$(git rev-list -n 1 "${NEXT}")
+                if [ "$TAGGED" != "$HEAD_SHA" ]; then
+                  echo "FAIL: ${NEXT} already exists on ${TAGGED}, not ${HEAD_SHA}" >&2
+                  exit 1
+                fi
+                echo "idempotent: ${NEXT} already on HEAD" >&2
+                printf "%s" "${NEXT#agent-v}"; exit 0
+              fi
+
+              git config user.email "jenkins@modelmatch.ci"
+              git config user.name  "modelmatch-jenkins"
+              git tag -a "$NEXT" -m "release(agent): $NEXT (build ${BUILD_NUMBER})" "$HEAD_SHA"
+              git push origin "refs/tags/${NEXT}" >/dev/null 2>&1
+              echo "created annotated tag $NEXT on $HEAD_SHA" >&2
+              printf "%s" "${NEXT#agent-v}"
+            ''').trim()
+            echo "Agent release version: ${env.RELEASE_VERSION}"
+            currentBuild.displayName = "#${env.BUILD_NUMBER} agent-v${env.RELEASE_VERSION}"
+          }
+        }
+      }
+    }
+
+    stage('Publish (ECR + Docker Hub)') {
+      // Publish the SAME tested image to BOTH registries. The immutable tags (<full-sha> +
+      // <X.Y.Z>) treat ECR + Docker Hub as ONE UNIT so a tag can never refer to two
+      // different digests across registries (the P19 contract). Per immutable tag:
+      //   * neither registry has it  -> push the tested candidate to both, then VERIFY the
+      //                                 two remote manifest digests match;
+      //   * both registries have it  -> verify they match, then SKIP (idempotent rerun);
+      //   * exactly ONE has it       -> FAIL loudly (a rebuilt candidate could differ from
+      //                                 the already-published digest) with manual-repair
+      //                                 guidance — never auto-push the rebuild to the gap.
+      // Only :demo moves unconditionally. ECR = instance profile; Docker Hub = CRED_DOCKERHUB.
+      // NO deploy of any kind.
+      when { allOf { branch 'main'; expression { env.AGENT_SKIP != 'true' } } }
+      steps {
+        withCredentials([usernamePassword(credentialsId: env.CRED_DOCKERHUB,
+                                          usernameVariable: 'DH_USER',
+                                          passwordVariable: 'DH_PASS')]) {
+          sh '''
+            set -eu
+            CAND="$ECR_REGISTRY/$AGENT_ECR_REPO:$IMAGE_CANDIDATE"
+            ECR_RR="$ECR_REGISTRY/$AGENT_ECR_REPO"
+            DH_RR="$DOCKERHUB_REGISTRY/$DOCKERHUB_REPO"
+
+            # --- log in to BOTH registries up front ---
+            aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
+              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            echo "$DH_PASS" | docker login --username "$DH_USER" --password-stdin "$DOCKERHUB_REGISTRY"
+
+            # Remote manifest digest of a tag, per registry. FAIL-CLOSED: print the digest
+            # if the tag exists, print NOTHING only on a *confirmed* not-found, and RETURN
+            # NON-ZERO on any other error (auth/network/throttle) so the caller aborts
+            # BEFORE it could push over a write-once tag it merely failed to look up.
+            ecr_digest() {  # $1 = tag
+              if out=$(aws ecr describe-images --region "$AWS_DEFAULT_REGION" \
+                         --repository-name "$AGENT_ECR_REPO" --image-ids imageTag="$1" \
+                         --query 'imageDetails[0].imageDigest' --output text 2>/tmp/ecr.err); then
+                case "$out" in None|"") : ;; *) printf '%s' "$out" ;; esac
+                return 0
+              fi
+              grep -q 'ImageNotFoundException' /tmp/ecr.err && return 0   # confirmed absent
+              echo "FATAL: ECR digest lookup for tag '$1' failed (not a not-found error):" >&2
+              cat /tmp/ecr.err >&2
+              return 1
+            }
+            dh_digest() {   # $1 = tag — Descriptor (manifest) digest, no pull
+              if out=$(docker manifest inspect -v "$DH_RR:$1" 2>/tmp/dh.err); then
+                dig=$(printf '%s' "$out" | grep -m1 '"digest"' | grep -oE 'sha256:[0-9a-f]{64}' | head -1 || true)
+                if [ -z "$dig" ]; then
+                  echo "FATAL: Docker Hub manifest for tag '$1' exists but yielded no digest:" >&2
+                  cat /tmp/dh.err >&2
+                  return 1
+                fi
+                printf '%s' "$dig"
+                return 0
+              fi
+              grep -qiE 'no such manifest|manifest unknown|not found' /tmp/dh.err && return 0  # confirmed absent
+              echo "FATAL: Docker Hub digest lookup for tag '$1' failed (not a not-found error):" >&2
+              cat /tmp/dh.err >&2
+              return 1
+            }
+
+            publish_immutable() {  # $1 = immutable tag
+              T="$1"
+              E=$(ecr_digest "$T") || exit 1
+              D=$(dh_digest "$T")  || exit 1
+              if [ -z "$E" ] && [ -z "$D" ]; then
+                # neither has it: push to both, then verify via REMOTE digest reads on both
+                docker tag  "$CAND" "$ECR_RR:$T"; docker push "$ECR_RR:$T"
+                docker tag  "$CAND" "$DH_RR:$T";  docker push "$DH_RR:$T"
+                E=$(ecr_digest "$T") || exit 1
+                D=$(dh_digest "$T")  || exit 1
+                if [ -z "$E" ] || [ -z "$D" ] || [ "$E" != "$D" ]; then
+                  echo "FAIL: published $T but remote registry digests differ (ecr=${E:-<absent>} dockerhub=${D:-<absent>})"; exit 1
+                fi
+                echo "published immutable $T to BOTH registries @ $E"
+              elif [ -n "$E" ] && [ -n "$D" ]; then
+                # both have it: must already be the same digest, then skip
+                if [ "$E" != "$D" ]; then
+                  echo "FAIL: immutable tag $T already exists with DIFFERENT digests (ecr=$E dockerhub=$D)."
+                  echo "      The registries diverged — manual repair required; refusing to auto-overwrite."; exit 1
+                fi
+                echo "immutable $T already in BOTH registries @ $E — preserving (skip)"
+              else
+                # exactly one has it: do NOT push a rebuilt candidate to the missing registry
+                echo "FAIL: immutable tag $T exists in ONLY ONE registry (ecr=${E:-<absent>} dockerhub=${D:-<absent>})."
+                echo "      Refusing to push a freshly-rebuilt candidate to the missing registry — it could"
+                echo "      differ from the already-published digest and break 'same digest in both registries'."
+                echo "      Manual repair: copy the EXISTING image across, then re-run, e.g.:"
+                echo "        crane copy <present-registry>/<repo>@<digest> <missing-registry>/<repo>:$T"
+                echo "        (or: skopeo copy docker://<present>@<digest> docker://<missing>:$T)"
+                exit 1
+              fi
+            }
+
+            publish_immutable "$GIT_SHA_FULL"
+            publish_immutable "$RELEASE_VERSION"
+
+            # :demo is the ONE mutable pointer — move it to this build in both registries.
+            docker tag  "$CAND" "$ECR_RR:$DEMO_TAG"; docker push "$ECR_RR:$DEMO_TAG"
+            docker tag  "$CAND" "$DH_RR:$DEMO_TAG";  docker push "$DH_RR:$DEMO_TAG"
+            echo "moved :$DEMO_TAG -> this build in both registries"
+
+            # --- provenance: confirm :demo landed as the SAME digest in both registries ---
+            # (authoritative REMOTE reads, not local RepoDigests which Docker may normalize).
+            DEMO_E=$(ecr_digest "$DEMO_TAG") || exit 1
+            DEMO_D=$(dh_digest "$DEMO_TAG")  || exit 1
+            if [ -z "$DEMO_E" ] || [ "$DEMO_E" != "$DEMO_D" ]; then
+              echo "FAIL: :$DEMO_TAG digests differ across registries (ecr=${DEMO_E:-<absent>} dockerhub=${DEMO_D:-<absent>})"; exit 1
+            fi
+            echo "provenance: :$DEMO_TAG @ $DEMO_E in BOTH registries (immutable tags verified above)"
+            docker logout "$DOCKERHUB_REGISTRY" >/dev/null 2>&1 || true
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      // Free the per-build candidate + published local tags so the persistent box
+      // doesn't accumulate layers. Guard on IMAGE_CANDIDATE: unset if the build failed
+      // before Source+config, or on a skipped (non-agent) build.
+      sh '''
+        if [ -n "${IMAGE_CANDIDATE:-}" ]; then
+          docker image rm -f "$ECR_REGISTRY/$AGENT_ECR_REPO:$IMAGE_CANDIDATE" 2>/dev/null || true
+          for T in "${GIT_SHA_FULL:-}" "${RELEASE_VERSION:-}" "${DEMO_TAG:-}"; do
+            [ -n "$T" ] || continue
+            docker image rm -f "$ECR_REGISTRY/$AGENT_ECR_REPO:$T" 2>/dev/null || true
+            docker image rm -f "$DOCKERHUB_REGISTRY/$DOCKERHUB_REPO:$T" 2>/dev/null || true
+          done
+        fi
+      '''
+    }
+    success {
+      script {
+        if (env.AGENT_SKIP == 'true') {
+          echo "P19 agent pipeline: SKIPPED (no agent-relevant change) on ${env.BRANCH_NAME} — green."
+        } else {
+          echo "P19 agent pipeline GREEN on ${env.BRANCH_NAME}"
+        }
+      }
+    }
+  }
+}

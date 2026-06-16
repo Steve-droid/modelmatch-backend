@@ -1,0 +1,21 @@
+# Trivy waivers for the AGENT image scan (P19 — Jenkinsfile.agent).
+#
+# DELIBERATELY SEPARATE from the backend `.trivyignore`: the agent image ships the full
+# BYOK provider set (`uv sync --extra llm` — anthropic/google-genai/boto3 + their
+# transitive deps), a different surface from the backend (`--extra bedrock`). A waiver
+# that's justified for one image must NOT silently apply to the other, so each image
+# carries its own ignore file.
+#
+# CI security policy (the Trivy stage runs
+# `--severity CRITICAL,HIGH --ignore-unfixed --exit-code 1`):
+#   * The pipeline FAILS on any HIGH/CRITICAL vulnerability that HAS AN AVAILABLE FIX
+#     (remediate-not-waive: bump the base image or the dependency — e.g. the
+#     `cryptography>=48.0.1` floor in pyproject.toml's `llm` extra).
+#   * Unfixed OS-package advisories (no patched version published yet) are reported but
+#     do NOT block a release — `--ignore-unfixed` handles them; the moment a fix ships
+#     the gate fails again.
+#
+# Reserved for SPECIFIC, DOCUMENTED per-CVE waivers (a fixed-but-deliberately-deferred
+# advisory). Each entry MUST carry a CVE id, a reason, and a recheck date.
+#
+# (currently none)
