@@ -62,6 +62,9 @@ pipeline {
 
   options {
     timestamps() // requires the Timestamper plugin on the controller
+    // Do our OWN explicit clean checkout below (CleanBeforeCheckout) instead of Jenkins'
+    // implicit one — a stale workspace can't poison the build/test/compose stages.
+    skipDefaultCheckout true
     // E2E brings up a compose stack and the release tail pushes a git tag — serialize
     // builds of this branch so neither races itself. (Cross-branch isolation comes from
     // the globally-unique RUN_ID below.)
@@ -73,8 +76,18 @@ pipeline {
   stages {
     stage('Source + config') {
       steps {
-        checkout scm // Multibranch provides the BE read deploy key for the checkout
         script {
+          // Explicit CLEAN checkout (Roey): CleanBeforeCheckout wipes the workspace first so
+          // no stale file survives across builds. scm.branches/userRemoteConfigs reuse the
+          // Multibranch job's branch + the BE read deploy key (GitHub Multibranch-safe).
+          // Capture the SCM vars: skipDefaultCheckout means Jenkins does NOT pre-populate
+          // env.GIT_COMMIT, so the commit is read from the checkout return (below).
+          def scmVars = checkout([
+            $class: 'GitSCM',
+            branches: scm.branches,
+            extensions: [[$class: 'CleanBeforeCheckout']],
+            userRemoteConfigs: scm.userRemoteConfigs,
+          ])
           // Load stable non-secret CI config from the repo. Parse into a Map with a
           // sandbox-safe map literal (collectEntries — no dynamic putAt), then assign env
           // by EXPLICIT property (env.FOO = …); the CPS sandbox rejects dynamic env[k]=v.
@@ -113,7 +126,11 @@ pipeline {
           // Globally-unique run id (BUILD_NUMBER is per-BRANCH, not global in Multibranch).
           String job = sanitizeId(env.JOB_NAME)
           if (job.length() > 50) { job = job.substring(0, 50).replaceAll('[-_]+$', '') }
-          String gc = env.GIT_COMMIT ?: 'nogit'
+          // Commit SHA from the checkout return (env.GIT_COMMIT is unset under
+          // skipDefaultCheckout); fall back to the clean workspace's HEAD to be safe.
+          String gc = (scmVars?.GIT_COMMIT ?: '').trim()
+          if (!gc) { gc = sh(returnStdout: true, script: 'git rev-parse HEAD').trim() }
+          env.GIT_COMMIT = gc
           String sha = gc.length() >= 7 ? gc.substring(0, 7) : gc
           env.RUN_ID = "${job}-${env.BUILD_NUMBER}-${sha}"
           env.IMAGE_CANDIDATE = "candidate-${env.RUN_ID}"
