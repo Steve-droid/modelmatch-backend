@@ -218,3 +218,7 @@ log: `git tag`.
 ## Contact
 
 Steve Levit — stevelevit230@gmail.com
+
+> CI: this repo runs two Multibranch pipelines — `Jenkinsfile` (backend release) and
+> `Jenkinsfile.agent` (publish-only CI-agent image). The agent job skips (green) unless an
+> agent-relevant path changes.
