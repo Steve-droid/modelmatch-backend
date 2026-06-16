@@ -133,6 +133,52 @@ def test_upgrade_builds_all_entities_with_no_embedding_columns(migration_db):
                 text("SELECT 1 FROM pg_type WHERE typname = 'vector'")
             ).first()
         assert has_vector is None, "pgvector type present — embeddings are dropped"
+
+        # Trusted CI runtime config is bootstrapped by migrations, not only by the
+        # offline test seed path. The three demo-supported runtime mappings must be
+        # present immediately after `upgrade head`.
+        with engine.connect() as conn:
+            runtime_rows = conn.execute(
+                text(
+                    """
+                    SELECT m.name, m.vendor, arc.provider, arc.provider_model_id,
+                           arc.auth_mode, arc.credential_env_var, arc.enabled
+                    FROM agent_runtime_config arc
+                    JOIN model m ON m.id = arc.model_id
+                    ORDER BY m.vendor, m.name
+                    """
+                )
+            ).all()
+        assert len(runtime_rows) == 3
+        assert runtime_rows == [
+            (
+                "Nova 2 Lite",
+                "Amazon",
+                "bedrock",
+                "global.amazon.nova-2-lite-v1:0",
+                "aws_iam",
+                None,
+                True,
+            ),
+            (
+                "Claude Haiku 4.5",
+                "Anthropic",
+                "anthropic",
+                "claude-haiku-4-5",
+                "api_key",
+                "ANTHROPIC_API_KEY",
+                True,
+            ),
+            (
+                "Gemini 2.5 Flash",
+                "Google",
+                "gemini",
+                "gemini-2.5-flash",
+                "api_key",
+                "GOOGLE_API_KEY",
+                True,
+            ),
+        ]
     finally:
         engine.dispose()
 

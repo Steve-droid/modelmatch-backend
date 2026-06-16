@@ -52,8 +52,14 @@ def test_post_creates_normalized_rows_and_get_lists_them(client, db_session):
     assert rows[0]["harness"] == "SWE-agent"
     assert rows[0]["harnessVendor"] == "Princeton"
 
-    # dimensions were get-or-created
-    assert db_session.scalar(select(func.count()).select_from(Model)) == 1
+    # dimensions were get-or-created: the migration may already have inserted trusted
+    # runtime-capable model rows, but posting this catalog row must still dedupe the
+    # Claude model and create exactly one benchmark dimension.
+    assert db_session.scalar(
+        select(func.count()).select_from(Model).where(
+            Model.name == "Claude Haiku 4.5", Model.vendor == "Anthropic"
+        )
+    ) == 1
     assert db_session.scalar(select(func.count()).select_from(Benchmark)) == 1
 
 
