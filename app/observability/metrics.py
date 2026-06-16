@@ -19,7 +19,15 @@ scrape, and importing this module is the only thing that pulls in prometheus_cli
 
 from __future__ import annotations
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+import os
+
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Histogram,
+    generate_latest,
+)
 
 from app.observability.logging import LLMObservation, log_llm_call
 
@@ -46,6 +54,51 @@ LLM_LATENCY = Histogram(
     _LABELS,
 )
 
+# --- HTTP request signals (P20 app dashboard: rate / latency / error rate) ----------
+# `path` is the ROUTE TEMPLATE (e.g. "/projects/{project_id}/ci-runs"), never the raw
+# URL — so an id in the path can't explode label cardinality. `status` is the numeric
+# HTTP status code as a string. Error rate is derived in Grafana as the 5xx share.
+_HTTP_LABELS = ("method", "path", "status")
+# Web-shaped buckets (5ms … 10s) — finer at the low end where our endpoints live.
+_HTTP_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+
+HTTP_REQUESTS = Counter(
+    "modelmatch_http_requests_total",
+    "HTTP requests, by method, route template and status code.",
+    _HTTP_LABELS,
+)
+HTTP_LATENCY = Histogram(
+    "modelmatch_http_request_duration_seconds",
+    "HTTP request duration in seconds, by method and route template.",
+    ("method", "path"),
+    buckets=_HTTP_BUCKETS,
+)
+
+# --- DB query timing (P20 app dashboard) --------------------------------------------
+# `operation` is the leading SQL verb (SELECT / INSERT / UPDATE / DELETE / OTHER) — a
+# bounded label, not the statement text (which could carry values/PII).
+_DB_BUCKETS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5)
+
+DB_QUERY_DURATION = Histogram(
+    "modelmatch_db_query_duration_seconds",
+    "Database query duration in seconds, by SQL operation.",
+    ("operation",),
+    buckets=_DB_BUCKETS,
+)
+
+
+def observe_http(method: str, path: str, status: int, duration_s: float) -> None:
+    """Record one served HTTP request: bump the per-status counter and the
+    method+route latency histogram. Called from the metrics middleware."""
+    status_str = str(status)
+    HTTP_REQUESTS.labels(method, path, status_str).inc()
+    HTTP_LATENCY.labels(method, path).observe(duration_s)
+
+
+def observe_db_query(operation: str, duration_s: float) -> None:
+    """Record one DB statement's wall-clock duration under its SQL verb."""
+    DB_QUERY_DURATION.labels(operation).observe(duration_s)
+
 
 def record_llm_metrics(obs: LLMObservation) -> None:
     """Increment the token/call/latency counters for one LLM call. Metrics ONLY — no
@@ -66,5 +119,19 @@ def record_llm_call(obs: LLMObservation) -> dict[str, object]:
 
 
 def render_metrics() -> tuple[bytes, str]:
-    """The Prometheus exposition payload + its content type, for the /metrics route."""
+    """The Prometheus exposition payload + its content type, for the /metrics route.
+
+    Under gunicorn the app runs with multiple worker processes, each of which would
+    otherwise keep a PRIVATE in-process registry — so Prometheus scrapes whichever
+    worker the load-balancer picks and the counters appear to jump backwards between
+    workers, breaking `rate()`. When ``PROMETHEUS_MULTIPROC_DIR`` is set (the container),
+    every worker writes to a shared mmap dir and we AGGREGATE across them here via the
+    MultiProcessCollector. Unset (tests / local uvicorn) → the default in-process
+    registry, unchanged."""
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import multiprocess  # lazy: only when multiproc is on
+
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry), CONTENT_TYPE_LATEST
     return generate_latest(), CONTENT_TYPE_LATEST

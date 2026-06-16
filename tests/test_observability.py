@@ -216,6 +216,105 @@ def test_metrics_endpoint_serves_prometheus_text():
 
 
 # ---------------------------------------------------------------------------
+# METRICS — HTTP request signals (P20: rate / latency / error rate)
+# ---------------------------------------------------------------------------
+
+def test_http_metrics_count_requests_under_route_template():
+    """A request to a parameterised route is recorded under the TEMPLATE (no raw id),
+    so ids can't explode label cardinality."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    # /healthz is a fixed route — its template == its path.
+    before = _sample(
+        "modelmatch_http_requests_total",
+        method="GET", path="/healthz", status="200",
+    )
+    c.get("/healthz")
+    after = _sample(
+        "modelmatch_http_requests_total",
+        method="GET", path="/healthz", status="200",
+    )
+    assert after == before + 1
+    # the latency histogram observed the same request
+    assert _sample(
+        "modelmatch_http_request_duration_seconds_count",
+        method="GET", path="/healthz",
+    ) >= 1
+
+
+def test_http_metrics_use_route_template_not_raw_path(client, db_session):
+    """Hitting /projects/{id}/... records path="/projects/{project_id}/..." — the id
+    never appears as its own label value."""
+    from app.catalog.seed import load_seed
+    from tests.test_ci import _agent_result, _project_with_token
+
+    load_seed(db_session)
+    pid, token = _project_with_token(client, db_session, "http_metrics@example.com")
+    client.post(
+        f"/projects/{pid}/ci-runs",
+        json=_agent_result("http-metrics-build"),
+        headers={"X-CI-Token": token},
+    )
+    text = client.get("/metrics").text
+    # the template is present; the concrete id is not a path-label value
+    assert 'path="/projects/{project_id}/ci-runs"' in text
+    assert f'path="/projects/{pid}/ci-runs"' not in text
+
+
+def test_http_metrics_excludes_the_metrics_scrape():
+    """/metrics must not count its own scrapes (it would self-inflate forever)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    c.get("/metrics")
+    text = c.get("/metrics").text
+    assert 'path="/metrics"' not in text
+
+
+def test_http_metrics_label_error_status():
+    """A 4xx/5xx is recorded with its status code so Grafana can derive error rate."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    before = _sample(
+        "modelmatch_http_requests_total",
+        method="GET", path="__unmatched__", status="404",
+    )
+    c.get("/no-such-route-xyz")
+    after = _sample(
+        "modelmatch_http_requests_total",
+        method="GET", path="__unmatched__", status="404",
+    )
+    assert after == before + 1
+
+
+# ---------------------------------------------------------------------------
+# METRICS — DB query timing (P20)
+# ---------------------------------------------------------------------------
+
+def test_db_query_metric_records_select(db_session):
+    """A SELECT through the engine is timed under operation="SELECT"."""
+    import app.db  # noqa: F401 — ensure the Engine-class listeners are registered
+    from sqlalchemy import text
+
+    before = _sample(
+        "modelmatch_db_query_duration_seconds_count", operation="SELECT"
+    )
+    db_session.execute(text("SELECT 1"))
+    after = _sample(
+        "modelmatch_db_query_duration_seconds_count", operation="SELECT"
+    )
+    assert after == before + 1
+
+
+# ---------------------------------------------------------------------------
 # METRICS — purpose="agent" folded in from /ci-runs (deterministic, no LLM)
 # ---------------------------------------------------------------------------
 
