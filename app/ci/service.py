@@ -71,13 +71,14 @@ def _provider_wiring(
     if auth_mode == "aws_iam":
         env_block = ""  # no model-key credential for Bedrock
         run_flags = (
+            f"        -e AWS_DEFAULT_REGION={aws_region} \\\n"
             f"        -e AWS_REGION={aws_region} \\\n"  # region is not a secret
             '        -v "$HOME/.aws:/home/appuser/.aws:ro" \\\n'
         )
         note = (
             "# Bedrock: the agent uses this node's AWS credentials (an EC2 instance\n"
             "        # role, or the mounted ~/.aws profile) — no API key. The role/profile\n"
-            "        # must allow bedrock:InvokeModel / Converse in $AWS_REGION.\n        "
+            "        # must allow bedrock:InvokeModel / Converse in $AWS_DEFAULT_REGION.\n        "
         )
         return env_block, run_flags, note
 

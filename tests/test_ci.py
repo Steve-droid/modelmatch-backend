@@ -493,6 +493,7 @@ def test_ci_setup_bedrock_runtime_config_uses_nova_without_byok_key(client, db_s
 
     assert "LLM_CLIENT=bedrock" in snippet
     assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
+    assert "AWS_DEFAULT_REGION=" in snippet
     assert "AWS_REGION=" in snippet
     assert "modelmatch-model-api-key" not in snippet
     assert "ANTHROPIC_API_KEY" not in snippet
@@ -583,6 +584,7 @@ def test_bedrock_snippet_uses_aws_creds_not_an_api_key():
     )
     assert "LLM_CLIENT=bedrock" in snippet and "LLM_CLIENT=fake" not in snippet
     assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
+    assert "AWS_DEFAULT_REGION=ap-south-1" in snippet
     assert "AWS_REGION=ap-south-1" in snippet
     assert "modelmatch-model-api-key" not in snippet  # no static key credential
     assert "ANTHROPIC_API_KEY" not in snippet

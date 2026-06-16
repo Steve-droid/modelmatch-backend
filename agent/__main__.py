@@ -57,7 +57,9 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(4, "diff_read_error", f"{type(exc).__name__}: {exc}")
 
     try:
-        client = build_llm_client(config.llm_client, model=config.model_id)
+        client = build_llm_client(
+            config.llm_client, model=config.model_id, region=config.aws_region
+        )
         result = review(diff, client, config)
     except MalformedFindings as exc:
         return _fail(2, "malformed_findings", str(exc))

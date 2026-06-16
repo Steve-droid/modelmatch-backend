@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -147,6 +148,74 @@ def test_agent_env_vars_are_read():
     assert cfg.token_ceiling == 500
     assert cfg.fail_severities == ["critical"]
     assert cfg.model_id == "claude-haiku-4"
+
+
+def test_agent_reads_bedrock_region_from_standard_aws_env():
+    """The agent's Bedrock path must honor the standard AWS region env exported by
+    the generated Jenkins snippet."""
+    import os
+    from unittest import mock
+
+    env = {"LLM_CLIENT": "bedrock", "AWS_DEFAULT_REGION": "ap-south-1"}
+    with mock.patch.dict(os.environ, env, clear=False):
+        cfg = AgentConfig(_env_file=None)
+    assert cfg.llm_client == "bedrock"
+    assert cfg.aws_region == "ap-south-1"
+
+
+def test_cli_main_passes_bedrock_region_to_client(monkeypatch, capsys):
+    import agent.__main__ as agent_main
+
+    calls = {}
+    fake_client = object()
+
+    monkeypatch.setattr(agent_main, "_read_diff", lambda _path: DIFF)
+
+    def _build(name, *, model="fake-model", api_key=None, region=None, client=None):
+        calls.update({"name": name, "model": model, "region": region})
+        return fake_client
+
+    def _review(diff, client, config):
+        assert diff == DIFF
+        assert client is fake_client
+        return SimpleNamespace(
+            gate="pass",
+            model_dump_json=lambda by_alias=True: json.dumps(
+                {
+                    "findings": [],
+                    "tokensIn": 0,
+                    "tokensOut": 0,
+                    "model": config.model_id,
+                    "gate": "pass",
+                    "gateReason": None,
+                }
+            ),
+        )
+
+    monkeypatch.setattr(agent_main, "build_llm_client", _build)
+    monkeypatch.setattr(agent_main, "review", _review)
+    monkeypatch.setattr(
+        agent_main.logging, "basicConfig", lambda **_kwargs: None
+    )  # keep test stderr quiet
+
+    from unittest import mock
+
+    env = {
+        "LLM_CLIENT": "bedrock",
+        "AGENT_MODEL": "global.amazon.nova-2-lite-v1:0",
+        "AWS_DEFAULT_REGION": "ap-south-1",
+    }
+    with mock.patch.dict(os.environ, env, clear=False):
+        code = agent_main.main([])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert calls == {
+        "name": "bedrock",
+        "model": "global.amazon.nova-2-lite-v1:0",
+        "region": "ap-south-1",
+    }
+    assert '"gate": "pass"' in out
 
 
 class _SpyClient:
