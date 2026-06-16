@@ -87,20 +87,15 @@ class Settings(BaseSettings):
     agent_image: str = "modelmatch-agent:latest"
     aws_region: str = "ap-south-1"  # used by the Bedrock variant of the snippet
 
-    # Provider config baked into the generated CI snippet (the agent is BYOK +
-    # provider-agnostic). Demo default = Anthropic Haiku live. Caps are low (the
-    # per-run ceiling on the user's key). Must be exactly one real provider — never
-    # "fake" (the savings "proof" would be meaningless) and never an unknown string
-    # the agent's factory would reject at runtime.
-    ci_agent_llm_client: str = "anthropic"      # anthropic | gemini | bedrock
-    ci_agent_model: str = "claude-haiku-4-5"
+    # CI runtime caps baked into the generated Jenkins snippet. The provider/model
+    # come from the selected model's agent_runtime_config row, not from env.
     ci_agent_max_tokens: int = Field(default=1024, ge=1)
     ci_agent_token_ceiling: int = Field(default=20_000, ge=1)
 
     # In-cluster LLM (S5b ingestion #3 + later chat #4) — the "two-surface" rule:
     # this is OUR account's Bedrock Nova via IRSA (no static keys), distinct from
-    # the BYOK ci_agent_* knobs above. `fake` is the offline default (tests + dev);
-    # a real run sets LLM_CLIENT=bedrock. The model id is deliberate (see S11 smoke:
+    # the user-side BYOK CI agent. `fake` is the offline default (tests + dev); a
+    # real run sets LLM_CLIENT=bedrock. The model id is deliberate (see S11 smoke:
     # Nova-1 Lite is fine on-demand; Nova-2 Lite needs its inference-profile id).
     llm_client: str = "fake"  # fake | bedrock (anthropic/gemini are BYOK-only)
     # Nova Lite via its APAC cross-region inference profile. In ap-south-1 the BARE id
@@ -168,20 +163,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"LLM_CLIENT must be one of {sorted(allowed)} for the in-cluster "
                 f"surface (got {v!r}); anthropic/gemini are BYOK (agent-only)."
-            )
-        return norm
-
-    @field_validator("ci_agent_llm_client")
-    @classmethod
-    def _validate_agent_provider(cls, v: str) -> str:
-        # Normalize to lowercase and accept ONLY the real BYOK providers — rejects
-        # "fake" and any typo/unsupported value at config-load, not mid-request.
-        allowed = {"anthropic", "gemini", "bedrock"}
-        norm = v.strip().lower()
-        if norm not in allowed:
-            raise ValueError(
-                f"CI_AGENT_LLM_CLIENT must be one of {sorted(allowed)} "
-                f"(got {v!r}); 'fake' and unknown providers are not allowed."
             )
         return norm
 

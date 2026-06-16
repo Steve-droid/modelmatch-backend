@@ -29,6 +29,7 @@ TEST_DB = "modelmatch_migration_test"
 EXPECTED_TABLES = {
     "user",
     "model",
+    "agent_runtime_config",
     "harness",
     "benchmark",
     "source_document",  # ingestion #3 input (content_hash = idempotency key)

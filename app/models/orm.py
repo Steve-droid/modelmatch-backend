@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -44,6 +45,10 @@ CHAT_ROLE = ENUM("user", "assistant", name="chat_role", create_type=False)
 TRACE_KIND = ENUM("savings", "benchmark_result", name="trace_kind", create_type=False)
 LLM_PURPOSE = ENUM("ingestion", "chat", "agent", name="llm_purpose", create_type=False)
 ALERT_KIND = ENUM("upgrade", "downgrade", name="alert_kind", create_type=False)
+AGENT_PROVIDER = ENUM(
+    "anthropic", "gemini", "bedrock", name="agent_provider", create_type=False
+)
+AGENT_AUTH_MODE = ENUM("api_key", "aws_iam", name="agent_auth_mode", create_type=False)
 
 # Shared numeric shapes (match the migration's _money / _score).
 _MONEY = Numeric(14, 6)
@@ -75,6 +80,27 @@ class Model(Base):
     input_price_per_mtok: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     output_price_per_mtok: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     data_policy: Mapped[Optional[str]] = mapped_column(DATA_POLICY)
+
+
+class AgentRuntimeConfig(Base):
+    __tablename__ = "agent_runtime_config"
+    __table_args__ = (
+        UniqueConstraint("model_id", name="uq_agent_runtime_config_model_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[int] = mapped_column(
+        ForeignKey("model.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(AGENT_PROVIDER)
+    provider_model_id: Mapped[str] = mapped_column(String(255))
+    auth_mode: Mapped[str] = mapped_column(AGENT_AUTH_MODE)
+    credential_env_var: Mapped[Optional[str]] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+
+    model: Mapped[Model] = relationship()
 
 
 class Harness(Base):
@@ -174,6 +200,7 @@ class RecommendationOption(Base):
     harness_id: Mapped[Optional[int]] = mapped_column(ForeignKey("harness.id"))
 
     profile: Mapped[RequirementsProfile] = relationship()
+    model: Mapped[Model] = relationship()
     evidence: Mapped[list[RecommendationEvidence]] = relationship(
         back_populates="option", cascade="all, delete-orphan"
     )

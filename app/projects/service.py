@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent_runtime import require_enabled_runtime_config
 from app.auth.deps import require_owner
 from app.models import JenkinsConnection, Model, Project, RecommendationOption, User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -52,6 +53,7 @@ def create_project(
     if option is None:
         raise _not_found("Recommendation option")
     require_owner(option.profile.user_id, current_user)  # 403 if not the caller's
+    require_enabled_runtime_config(db, option.model_id, option.model.name)
 
     # The baseline must be a real model (savings are computed against its price).
     if db.get(Model, payload.baseline_model_id) is None:
@@ -102,6 +104,7 @@ def update_project(
         if option is None:
             raise _not_found("Recommendation option")
         require_owner(option.profile.user_id, current_user)  # only your own option
+        require_enabled_runtime_config(db, option.model_id, option.model.name)
         project.selected_option_id = data["selected_option_id"]
 
     if "baseline_model_id" in data:
