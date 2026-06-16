@@ -128,6 +128,11 @@ uv run uvicorn app.main:app --reload   # dev server on :8000
 Health/observability: `GET /healthz` (liveness) · `GET /readyz` (readiness) · `GET /metrics`
 (Prometheus). Interactive API docs at `http://localhost:8000/docs`.
 
+`alembic upgrade head` now bootstraps the trusted CI runtime-config rows for the
+supported runnable models (`Claude Haiku 4.5`, `Nova 2 Lite`, `Gemini 2.5 Flash`), so
+production no longer depends on the offline test seed path just to create CI agents.
+The benchmark/catalog seed itself is still a separate test/dev/demo step.
+
 > The compose `backend` service builds the production image, but for local dev prefer the host path
 > above: that image runs gunicorn (no reload), the compose service isn't yet passed a `JWT_SECRET`, and
 > the runtime image doesn't carry the Alembic migrations — so the schema must still be built with
@@ -188,6 +193,13 @@ graph LR
     F --> G[Publish ECR]
     G --> H[Deploy GitOps]
 ```
+
+Release checklist:
+- verify the backend release bumped both `charts/modelmatch/values.yaml`
+  (`backend.image.tag`) and `charts/modelmatch-postgres/values.yaml`
+  (`migrate.image.tag`) to the same version
+- after deploy, confirm the PostSync migrate job ran on that same backend image tag
+  before calling the release done
 
 ## Conventions
 
