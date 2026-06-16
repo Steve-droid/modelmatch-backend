@@ -27,11 +27,10 @@ COPY --chown=appuser:appuser migrations ./migrations
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser gunicorn.conf.py ./
 ENV PATH="/app/.venv/bin:$PATH"
-# Multiprocess metrics: every gunicorn worker writes to this shared dir, and /metrics
-# aggregates across them (gunicorn.conf.py clears it on start). /tmp is writable by the
-# non-root appuser and ephemeral per pod (counters are cumulative-from-process-start).
-ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
 USER appuser
 EXPOSE 8000
-# Config lives in gunicorn.conf.py: workers/bind + the multiprocess on_starting/child_exit hooks.
+# Config lives in gunicorn.conf.py: workers/bind + the multiprocess wiring. The
+# PROMETHEUS_MULTIPROC_DIR env is set INSIDE that file (scoped to the gunicorn process
+# tree) — deliberately NOT an image-wide ENV, so `alembic upgrade head` on the SAME
+# image keeps the plain in-process registry instead of crashing on a missing mmap dir.
 CMD ["gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]

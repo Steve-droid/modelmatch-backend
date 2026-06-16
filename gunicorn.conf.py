@@ -7,12 +7,23 @@ and `rate()` breaks. Multiprocess mode points every worker at one shared mmap di
 (``PROMETHEUS_MULTIPROC_DIR``); the ``/metrics`` route aggregates across them (see
 ``app.observability.metrics.render_metrics``).
 
-``PROMETHEUS_MULTIPROC_DIR`` is set in the Dockerfile (the only place 2 workers run).
-Locally / in tests it's unset → ordinary single-registry behaviour.
+CRITICAL — the env var is set HERE, not as an image-wide Dockerfile ENV. Multiprocess
+mode must apply ONLY to the gunicorn serve path. The SAME image also runs
+``alembic upgrade head`` (the migrate Job / compose migrate service); alembic executes
+SQL, which fires the DB-timing listener → a metric write. In multiprocess mode that
+write targets a per-pid mmap file under the dir — and only gunicorn (`on_starting`)
+ever creates that dir, so under a blanket ENV alembic crashed with FileNotFoundError.
+Setting the var here scopes it to the gunicorn arbiter (inherited by forked workers);
+alembic never loads this file, so it uses the ordinary in-process registry. Locally /
+in tests the var is unset → ordinary single-registry behaviour.
 """
 
 import os
 import shutil
+
+# Scope multiprocess metrics to the gunicorn process tree (see the module docstring).
+# setdefault so an explicit override from the environment still wins.
+os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus-multiproc")
 
 bind = "0.0.0.0:8000"
 workers = 2
