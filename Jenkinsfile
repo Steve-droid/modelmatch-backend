@@ -2,9 +2,10 @@
 // controller. Two ordered stage groups + a release tail:
 //   FAST    — Build -> Bandit/pip-audit gate -> unit test (no containers, fake LLM).
 //   FULL    — Package BE image -> Trivy -> Integration (real Postgres) -> E2E (compose) ->
-//             [gated] e2e-live (one real Nova call, main/#e2e-live only).
+//             [main only] e2e-live (one real Nova call).
 //   RELEASE — [main] Tag (SemVer) -> Publish (ECR) -> Deploy (gitops image-tag bump).
-// Every branch runs FAST + FULL; only main runs RELEASE; FAST_ONLY skips FULL on demand.
+// FAST runs on every push; FULL runs on feature/* and main only (other branches stop after FAST);
+// e2e-live + RELEASE run on main only; FAST_ONLY skips FULL on demand.
 // No static AWS keys: EC2 instance role does ECR + Bedrock; deploy keys push tag/bump.
 // Non-secret delivery config lives in ci/pipeline.env. Tools (uv/Playwright/Trivy/yq) run
 // as pinned containers since the box only has Docker.
@@ -109,13 +110,7 @@ pipeline {
           env.RUN_ID = "${job}-${env.BUILD_NUMBER}-${sha}"
           env.IMAGE_CANDIDATE = "candidate-${env.RUN_ID}"
 
-          // e2e-live predicate: main always, or a #e2e-live opt-in in the commit message.
-          // When true the live Bedrock subcheck is required, so green = live path proven.
-          String msg = sh(returnStdout: true, script: 'git --no-pager log -1 --pretty=%B').trim()
-          boolean live = (env.BRANCH_NAME == 'main') || msg.contains('#e2e-live')
-          env.E2E_LIVE = live ? 'true' : 'false'
-
-          sh 'git --no-pager log -1 --oneline; echo "Branch: ${BRANCH_NAME}  RunId: ${RUN_ID}  e2eLive: ${E2E_LIVE}  fastOnly: ${FAST_ONLY}"'
+          sh 'git --no-pager log -1 --oneline; echo "Branch: ${BRANCH_NAME}  RunId: ${RUN_ID}  fastOnly: ${FAST_ONLY}"'
         }
       }
     }
@@ -151,7 +146,16 @@ pipeline {
     // Build + scan the image, then integration + E2E.
 
     stage('Full lane') {
-      when { expression { !params.FAST_ONLY } }
+      // Branches other than main / feature/* stop after FAST — keeps throwaway branches cheap.
+      when {
+        allOf {
+          expression { !params.FAST_ONLY }
+          anyOf {
+            branch 'main'
+            branch pattern: 'feature/*', comparator: 'GLOB'
+          }
+        }
+      }
       stages {
         stage('Package (BE image)') {
           // Build the backend image with the per-build candidate tag; promoted to SemVer on main.
@@ -269,9 +273,9 @@ pipeline {
         }
 
         stage('E2E live (gated real-Bedrock)') {
-          // The single real-model path (main / #e2e-live). Same stack with LLM_CLIENT=bedrock;
+          // The single real-model path (main only). Same stack with LLM_CLIENT=bedrock;
           // the subcheck makes one real Nova call via the instance profile. Token-capped.
-          when { expression { env.E2E_LIVE == 'true' } }
+          when { branch 'main' }
           steps {
             script {
               def ports = sh(script: './ci/free-ports.sh 3', returnStdout: true).trim().split(/\s+/)
