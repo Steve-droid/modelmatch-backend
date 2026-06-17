@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The SINGLE gated e2e-live real-Bedrock subcheck (P18). Runs ONLY on main / #e2e-live,
+# The SINGLE gated e2e-live real-Bedrock subcheck (P18). Runs ONLY on main,
 # AFTER the fake-LLM E2E, against the SAME throwaway compose stack but with the backend
 # in LLM_CLIENT=bedrock mode. It makes ONE tiny real Nova call through the backend's
 # in-cluster ingestion path (POST /benchmarks/ingest) — the canonical Bedrock surface —
