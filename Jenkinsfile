@@ -1,33 +1,15 @@
-// modelmatch-backend CI/CD pipeline (P18 — the SECOND real product pipeline).
-//
-// Runs on the graded persistent Jenkins controller as a MULTIBRANCH job. Two-job CI
-// expressed as two ORDERED stage GROUPS in one Jenkinsfile (one webhook, one checkout):
-//   * FAST lane  — Source -> Build -> static/dep gate (Bandit + pip-audit) -> unit test
-//                  (no containers, fake LLM). Quick feedback on every push.
-//   * FULL lane  — Package (BE image) -> Trivy -> Integration (real Postgres via compose,
-//                  fake LLM) -> E2E (thin Playwright vs a throwaway FE+BE+Postgres stack,
-//                  BE image under test, fake LLM) -> [gated] e2e-live (the SINGLE real-
-//                  Bedrock path: one Nova call via the instance profile, main/#e2e-live).
-//   * RELEASE    — [main only] Tag (annotated SemVer) -> Publish (ECR) -> Deploy (bump
-//                  backend.image.tag in the gitops umbrella; ArgoCD then syncs).
-//
-// EVERY branch runs FAST + FULL (the full fake-LLM validation); only `main` runs the
-// release tail, and only `main`/`#e2e-live` runs the live path. FAST_ONLY is a manual
-// override (default false) to demo a fast-only build — webhook/feature/main builds run
-// everything.
-//
-// Identities (NO static AWS keys; creds referenced by ID only):
-//   * EC2 instance role  modelmatch-jenkins-role  -> ECR login/push + the e2e-live
-//     bedrock:InvokeModel (Nova) — no keys on the box.
-//   * backend-deploy-key (WRITE) -> push the annotated git tag (release tail only).
-//   * gitops-deploy-key  (WRITE) -> commit the image-tag bump (ArgoCD then syncs).
-// Stable non-secret delivery config (registry/repo/tool image digests/targets/cred IDs)
-// lives in ci/pipeline.env (loaded + validated below), NOT hardcoded here. uv/Playwright/
-// Trivy/yq run as pinned throwaway containers — the box has Docker, not a Python/Node
-// toolchain — `sh`/`docker` over plugins, per the controller plan.
+// modelmatch-backend CI/CD pipeline (P18). Multibranch job on the persistent Jenkins
+// controller. Two ordered stage groups + a release tail:
+//   FAST    — Build -> Bandit/pip-audit gate -> unit test (no containers, fake LLM).
+//   FULL    — Package BE image -> Trivy -> Integration (real Postgres) -> E2E (compose) ->
+//             [gated] e2e-live (one real Nova call, main/#e2e-live only).
+//   RELEASE — [main] Tag (SemVer) -> Publish (ECR) -> Deploy (gitops image-tag bump).
+// Every branch runs FAST + FULL; only main runs RELEASE; FAST_ONLY skips FULL on demand.
+// No static AWS keys: EC2 instance role does ECR + Bedrock; deploy keys push tag/bump.
+// Non-secret delivery config lives in ci/pipeline.env. Tools (uv/Playwright/Trivy/yq) run
+// as pinned containers since the box only has Docker.
 
-// Make an id safe for docker tags AND compose project names: lowercase, decode %2F, map
-// every other unsafe char to '-', collapse repeats, trim, and bound the length.
+// Make an id safe for docker tags + compose project names.
 def sanitizeId(String s) {
   String out = s.toLowerCase().replace('%2f', '-')
   out = out.replaceAll('[^a-z0-9_-]', '-').replaceAll('-+', '-')
@@ -35,10 +17,8 @@ def sanitizeId(String s) {
   return out
 }
 
-// Run a uv/python command inside the pinned uv container with the Jenkins workspace
-// mounted, so the .venv built by `uv sync` (Build) persists across the Python stages.
-// Runs as the Jenkins uid so files stay cleanable; HOME + uv cache point at /tmp.
-// --no-sync stages reuse the Build venv (no network re-resolve).
+// Run a uv/python command in the pinned uv container with the workspace mounted, so the
+// Build .venv persists across Python stages. Runs as the Jenkins uid; HOME/cache in /tmp.
 def runUv(String cmd) {
   sh """
     docker run --rm \\
@@ -54,20 +34,17 @@ pipeline {
   agent any
 
   parameters {
-    // Manual override to run only the FAST lane (e.g. a quick demo build). Default false
-    // so webhook/feature/main builds run the FULL fake-LLM validation, per the plan.
+    // Manual override to run only the FAST lane (e.g. a quick demo build).
     booleanParam(name: 'FAST_ONLY', defaultValue: false,
                  description: 'Run only the fast lane (static gate + unit). Default: false (run everything).')
   }
 
   options {
-    timestamps() // requires the Timestamper plugin on the controller
-    // Do our OWN explicit clean checkout below (CleanBeforeCheckout) instead of Jenkins'
-    // implicit one — a stale workspace can't poison the build/test/compose stages.
+    timestamps()
+    // We do our own clean checkout below (CleanBeforeCheckout), so skip Jenkins' implicit one.
     skipDefaultCheckout true
-    // E2E brings up a compose stack and the release tail pushes a git tag — serialize
-    // builds of this branch so neither races itself. (Cross-branch isolation comes from
-    // the globally-unique RUN_ID below.)
+    // Serialize same-branch builds so the compose stack + tag push don't race themselves
+    // (cross-branch isolation comes from the unique RUN_ID).
     disableConcurrentBuilds()
     timeout(time: 40, unit: 'MINUTES')
     buildDiscarder(logRotator(numToKeepStr: '20'))
@@ -77,20 +54,17 @@ pipeline {
     stage('Source + config') {
       steps {
         script {
-          // Explicit CLEAN checkout (Roey): CleanBeforeCheckout wipes the workspace first so
-          // no stale file survives across builds. scm.branches/userRemoteConfigs reuse the
-          // Multibranch job's branch + the BE read deploy key (GitHub Multibranch-safe).
-          // Capture the SCM vars: skipDefaultCheckout means Jenkins does NOT pre-populate
-          // env.GIT_COMMIT, so the commit is read from the checkout return (below).
+          // Clean checkout: CleanBeforeCheckout wipes the workspace first; reuse the
+          // Multibranch job's branch + deploy key. Capture scmVars for GIT_COMMIT (not
+          // pre-populated under skipDefaultCheckout).
           def scmVars = checkout([
             $class: 'GitSCM',
             branches: scm.branches,
             extensions: [[$class: 'CleanBeforeCheckout']],
             userRemoteConfigs: scm.userRemoteConfigs,
           ])
-          // Load stable non-secret CI config from the repo. Parse into a Map with a
-          // sandbox-safe map literal (collectEntries — no dynamic putAt), then assign env
-          // by EXPLICIT property (env.FOO = …); the CPS sandbox rejects dynamic env[k]=v.
+          // Load non-secret CI config. Parse with collectEntries (sandbox-safe), then assign
+          // env by explicit property — the CPS sandbox rejects dynamic env[k]=v.
           Map cfg = readFile('ci/pipeline.env').readLines()
             .findAll { String l -> l.trim() && !l.trim().startsWith('#') && l.contains('=') }
             .collectEntries { String l ->
@@ -124,11 +98,10 @@ pipeline {
           env.CRED_BE_DEPLOY_KEY = cfg.get('CRED_BE_DEPLOY_KEY')
           env.CRED_GITOPS_KEY    = cfg.get('CRED_GITOPS_KEY')
 
-          // Globally-unique run id (BUILD_NUMBER is per-BRANCH, not global in Multibranch).
+          // Globally-unique run id (BUILD_NUMBER is per-branch in Multibranch).
           String job = sanitizeId(env.JOB_NAME)
           if (job.length() > 50) { job = job.substring(0, 50).replaceAll('[-_]+$', '') }
-          // Commit SHA from the checkout return (env.GIT_COMMIT is unset under
-          // skipDefaultCheckout); fall back to the clean workspace's HEAD to be safe.
+          // Commit SHA from the checkout return; fall back to HEAD.
           String gc = (scmVars?.GIT_COMMIT ?: '').trim()
           if (!gc) { gc = sh(returnStdout: true, script: 'git rev-parse HEAD').trim() }
           env.GIT_COMMIT = gc
@@ -136,9 +109,8 @@ pipeline {
           env.RUN_ID = "${job}-${env.BUILD_NUMBER}-${sha}"
           env.IMAGE_CANDIDATE = "candidate-${env.RUN_ID}"
 
-          // e2e-live predicate: main always, or a #e2e-live opt-in in the commit message
-          // on any branch. When true the live Bedrock subcheck is REQUIRED (fails the
-          // build if it can't run), so a green build means the live path was proven.
+          // e2e-live predicate: main always, or a #e2e-live opt-in in the commit message.
+          // When true the live Bedrock subcheck is required, so green = live path proven.
           String msg = sh(returnStdout: true, script: 'git --no-pager log -1 --pretty=%B').trim()
           boolean live = (env.BRANCH_NAME == 'main') || msg.contains('#e2e-live')
           env.E2E_LIVE = live ? 'true' : 'false'
@@ -148,55 +120,47 @@ pipeline {
       }
     }
 
-    // =========================== FAST lane (every push) ===========================
-    // Quick feedback: deps, the security gate, and the unit suite — no containers.
+    // ===================== FAST lane (every push) =====================
+    // Quick feedback: deps, security gate, unit suite — no containers.
 
     stage('Fast lane') {
       stages {
         stage('Build (uv sync)') {
-          // Resolve the locked deps (runtime + dev: pytest, bandit, pip-audit) into a
-          // workspace .venv once; later fast/integration stages reuse it with --no-sync.
+          // Resolve locked deps into a workspace .venv once; later stages reuse it (--no-sync).
           steps { runUv('uv sync --frozen --extra bedrock') }
         }
 
         stage('Static/dep gate (Bandit + pip-audit)') {
           steps {
-            // Bandit SAST over our code (app + agent). HARD gate on HIGH severity AND
-            // HIGH confidence (documented threshold); pyproject excludes tests/fixtures.
+            // Bandit SAST over app + agent; hard gate on HIGH severity AND HIGH confidence.
             runUv('uv run --no-sync bandit -r app agent --severity-level high --confidence-level high -q')
-            // pip-audit over the RUNTIME dependency set only (export the locked deps the
-            // image ships — no dev-tool noise). Remediate-not-waive: any advisory fails
-            // the gate; documented unfixable transitives would be added as --ignore-vuln.
+            // pip-audit over the runtime deps only (the set the image ships). Remediate-not-
+            // waive: any advisory fails; documented unfixables would go in --ignore-vuln.
             runUv('uv export --frozen --no-dev --extra bedrock --format requirements-txt --no-emit-project -o /tmp/req.txt && uv run --no-sync pip-audit -r /tmp/req.txt --progress-spinner=off')
           }
         }
 
         stage('Test (unit, no containers)') {
-          // Unit suite only: `-m "not integration"` deselects every DB-backed test, so
-          // this needs no Postgres. Fake LLM (the offline default) — zero tokens.
+          // Unit suite only (-m "not integration" → no Postgres). Fake LLM, zero tokens.
           steps { runUv('LLM_CLIENT=fake uv run --no-sync pytest -m "not integration" -q') }
         }
       }
     }
 
-    // =========================== FULL lane (every push) ===========================
-    // Heavier validation: build + scan the image, then the integration + E2E test types.
+    // ===================== FULL lane (every push) =====================
+    // Build + scan the image, then integration + E2E.
 
     stage('Full lane') {
       when { expression { !params.FAST_ONLY } }
       stages {
         stage('Package (BE image)') {
-          // Build the real artifact: the backend image. Tagged with the per-build
-          // candidate tag; only promoted to a published SemVer tag in the main tail.
+          // Build the backend image with the per-build candidate tag; promoted to SemVer on main.
           steps { sh 'docker build -t "$ECR_REGISTRY/$ECR_REPO:$IMAGE_CANDIDATE" .' }
         }
 
         stage('Trivy image scan') {
-          // Gate on CRITICAL + HIGH that HAVE A FIX (--ignore-unfixed): remediate-not-
-          // waive stays in force for anything actionable, but unfixed base-OS advisories
-          // (no upstream patch yet) don't permanently block releases — the moment a fix
-          // ships they stop being "unfixed" and the gate fails again. .trivyignore is
-          // reserved for specific, documented per-CVE waivers (currently none).
+          // Gate on fixable CRITICAL + HIGH (--ignore-unfixed) so unpatched base-OS CVEs
+          // don't permanently block; .trivyignore holds documented per-CVE waivers (none yet).
           steps {
             sh '''
               set -eu
@@ -216,9 +180,8 @@ pipeline {
         }
 
         stage('Integration (real Postgres)') {
-          // API + ORM tests against a REAL Postgres from a throwaway compose `db`.
-          // tests/conftest.py creates its own throwaway DB on it + `alembic upgrade head`,
-          // so the stage only needs the bare server. Fake LLM. NEVER the cluster/dev DB.
+          // API + ORM tests against a real Postgres from a throwaway compose `db` (conftest
+          // creates its DB + runs alembic). Fake LLM. Never the cluster/dev DB.
           steps {
             script {
               String pgPort = sh(script: './ci/free-ports.sh 1', returnStdout: true).trim()
@@ -230,8 +193,7 @@ pipeline {
                 "JWT_SECRET=${jwt}",
               ]) {
                 sh './ci/e2e-stack.sh up-db'
-                // pytest in the uv container, host network so localhost:<pgPort> reaches
-                // the published compose port; reuses the workspace .venv (--no-sync).
+                // pytest in the uv container on host network so localhost:<pgPort> reaches compose.
                 sh """
                   set -eu
                   docker run --rm --network host \
@@ -253,9 +215,8 @@ pipeline {
         }
 
         stage('E2E (throwaway compose, fake LLM)') {
-          // Drive the candidate BACKEND image through the real FE/API path: a throwaway
-          // FE(ECR)+BE(candidate)+Postgres stack — empty volume -> migrate+seed -> thin
-          // Playwright smoke -> down -v. Fake-LLM only (never e2e-live here).
+          // Drive the candidate backend through the real FE/API path: throwaway
+          // FE(ECR)+BE(candidate)+Postgres stack -> migrate+seed -> Playwright smoke. Fake LLM.
           steps {
             script {
               def ports = sh(script: './ci/free-ports.sh 3', returnStdout: true).trim().split(/\s+/)
@@ -284,10 +245,8 @@ pipeline {
                     | docker login --username AWS --password-stdin "$ECR_REGISTRY"
                 '''
                 sh './ci/e2e-stack.sh up'
-                // Playwright in its pinned image, host network so localhost:<port> reaches
-                // the published compose ports. `npm ci` installs the one pinned dep from
-                // ci/e2e/package-lock.json. E2E_REQUIRE_BACKEND makes an unreachable
-                // backend FAIL, not skip.
+                // Playwright in its pinned image on host network; E2E_REQUIRE_BACKEND makes
+                // an unreachable backend fail rather than skip.
                 sh """
                   set -eu
                   docker run --rm --network host \
@@ -310,10 +269,8 @@ pipeline {
         }
 
         stage('E2E live (gated real-Bedrock)') {
-          // The SINGLE real-model path: main / #e2e-live only. Same throwaway stack but
-          // the backend runs LLM_CLIENT=bedrock; the e2e-live subcheck makes ONE real
-          // Nova ingest call via the instance profile. Required-when-triggered: any
-          // failure fails the build. Token-capped by the stack env; no diff/secret logs.
+          // The single real-model path (main / #e2e-live). Same stack with LLM_CLIENT=bedrock;
+          // the subcheck makes one real Nova call via the instance profile. Token-capped.
           when { expression { env.E2E_LIVE == 'true' } }
           steps {
             script {
@@ -335,9 +292,8 @@ pipeline {
                 "API_BASE_URL=http://localhost:${bePort}",
                 "PUBLIC_BASE_URL=http://localhost:${bePort}",
                 "CORS_ALLOW_ORIGINS=http://localhost:${fePort}",
-                // The live surface: Bedrock Nova via the instance profile (no static keys).
-                // A real (non-placeholder) chat RO password is required once LLM_CLIENT!=fake;
-                // migrate creates the role with it so backend + role agree (random per run).
+                // Live surface: Bedrock Nova via instance profile. A real chat RO password is
+                // required once LLM_CLIENT!=fake; migrate creates the role with it (random per run).
                 "LLM_CLIENT=bedrock",
                 "CHAT_READONLY_DB_PASSWORD=${roPw}",
               ]) {
@@ -369,9 +325,8 @@ pipeline {
       when { allOf { branch 'main'; expression { !params.FAST_ONLY } } }
       stages {
         stage('Tag') {
-          // Compute the next SemVer from git tags and create an ANNOTATED tag on the
-          // current main commit. Idempotent: already tagged on this commit -> reuse; the
-          // computed tag exists on a DIFFERENT commit -> fail. Uses the BE WRITE key.
+          // Compute the next SemVer and create an annotated tag on HEAD (BE write key).
+          // Idempotent: already tagged here -> reuse; computed tag on another commit -> fail.
           steps {
             withCredentials([sshUserPrivateKey(credentialsId: env.CRED_BE_DEPLOY_KEY,
                                                keyFileVariable: 'BE_KEY',
@@ -428,7 +383,7 @@ pipeline {
         }
 
         stage('Publish (ECR)') {
-          // Promote the scanned candidate image to the published SemVer tag (instance role).
+          // Promote the scanned candidate image to the SemVer tag (instance role).
           steps {
             sh '''
               set -eu
@@ -442,9 +397,8 @@ pipeline {
         }
 
         stage('Deploy (gitops bump)') {
-          // The ONLY deploy action: bump the backend app image tag AND the migrate-job
-          // image tag in gitops, then push. ArgoCD syncs from there. Never a hand
-          // kubectl/helm.
+          // The only deploy action: bump the backend app image tag AND the migrate-job
+          // image tag in gitops, then push; ArgoCD syncs from there. Never a hand kubectl/helm.
           steps {
             withCredentials([sshUserPrivateKey(credentialsId: env.CRED_GITOPS_KEY,
                                                keyFileVariable: 'GITOPS_KEY',
@@ -479,8 +433,9 @@ pipeline {
 
   post {
     always {
-      // Free the per-build candidate image so the persistent box doesn't accumulate
-      // layers. Guard on IMAGE_CANDIDATE: unset if the build failed before Source+config.
+      // TODO: notify
+      // Remove the per-build candidate image so the persistent controller doesn't accumulate
+      // layers on disk. Guarded: IMAGE_CANDIDATE is unset if we failed before Source+config.
       sh 'if [ -n "${IMAGE_CANDIDATE:-}" ]; then docker image rm -f "$ECR_REGISTRY/$ECR_REPO:$IMAGE_CANDIDATE" || true; fi'
     }
     success { echo "P18 backend pipeline GREEN on ${env.BRANCH_NAME}" }
