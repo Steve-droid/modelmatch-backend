@@ -35,25 +35,29 @@ from app.models import (
 )
 
 # (build, days_ago, tokens_in, tokens_out, n_findings, n_accept, n_reject)
-# A 3-week arc: savings accumulate; mostly-passing quality with two quality-risk runs
-# (acceptance < 0.8) and two unrated runs (no feedback) so every KPI bucket + the
-# quality dip is visible. accept/(accept+reject) >= QUALITY_THRESHOLD (0.8) → banks.
-_RUNS = [
-    (201, 20, 1400, 380, 4, 4, 0),  # 100% banked
-    (202, 19, 1350, 360, 3, 3, 0),  # 100% banked
-    (203, 18, 1500, 410, 5, 4, 1),  # 80%  banked (at threshold)
-    (204, 17, 1280, 340, 4, 0, 0),  # unrated (no feedback)
-    (205, 16, 1600, 430, 6, 3, 3),  # 50%  quality risk
-    (206, 14, 1330, 350, 4, 4, 0),  # 100% banked
-    (207, 12, 1450, 390, 5, 4, 1),  # 80%  banked
-    (208, 10, 1220, 320, 3, 3, 0),  # 100% banked
-    (209, 8, 1700, 450, 6, 2, 3),   # 40%  quality risk
-    (210, 6, 1300, 340, 4, 4, 0),   # 100% banked
-    (211, 4, 1180, 300, 3, 0, 0),   # unrated
-    (212, 3, 1500, 400, 5, 5, 0),   # 100% banked
-    (213, 2, 1100, 280, 3, 3, 0),   # 100% banked
-    (214, 1, 1050, 270, 2, 2, 0),   # 100% banked
-]
+# Deterministic run generator — produces `count` CI runs across `count` days so the
+# dashboard shows an arc: savings accumulate, with a few quality-risk runs (acceptance
+# < 0.8) and a couple unrated runs (no feedback) so every KPI bucket + the quality dip
+# is visible. accept/(accept+reject) >= QUALITY_THRESHOLD (0.8) → the run banks.
+# Tuple shape: (build, days_ago, tokens_in, tokens_out, n_findings, n_accept, n_reject).
+# Same count → identical output (no randomness), so re-seeding is reproducible.
+def _make_runs(count: int = 30) -> list[tuple[int, int, int, int, int, int, int]]:
+    runs: list[tuple[int, int, int, int, int, int, int]] = []
+    for i in range(count):
+        build = 201 + i
+        days_ago = count - i  # oldest first; most recent run = 1 day ago
+        tin = 1100 + (i * 37) % 650  # 1100–1749, deterministic spread
+        tout = 290 + (i * 13) % 200  # 290–489
+        n_find = 2 + (i % 5)  # 2–6 findings
+        if i % 9 == 4:  # ~1 in 9 → unrated (no feedback at all)
+            n_acc, n_rej = 0, 0
+        elif i % 7 == 6:  # ~1 in 7 → quality risk (acceptance < 0.8)
+            n_rej = max(2, (n_find + 1) // 2)
+            n_acc = n_find - n_rej
+        else:  # banked: every finding accepted (100%)
+            n_acc, n_rej = n_find, 0
+        runs.append((build, days_ago, tin, tout, n_find, n_acc, n_rej))
+    return runs
 
 _THRESHOLD = Decimal("0.8")  # mirrors QUALITY_THRESHOLD (S13)
 _FINDINGS = [
@@ -74,7 +78,7 @@ def _cost(tokens_in: int, tokens_out: int, m: Model) -> Decimal:
     return (cin + cout).quantize(Decimal("0.000001"))
 
 
-def seed(project_name: str = "demo-api") -> None:
+def seed(project_name: str = "demo-api", count: int = 30) -> None:
     db = SessionLocal()
     try:
         project = db.scalar(select(Project).where(Project.name == project_name))
@@ -97,8 +101,9 @@ def seed(project_name: str = "demo-api") -> None:
         db.flush()
 
         now = datetime.now(timezone.utc)
+        runs = _make_runs(count)
         banked = risk = unrated = 0
-        for build, days_ago, tin, tout, n_find, n_acc, n_rej in _RUNS:
+        for build, days_ago, tin, tout, n_find, n_acc, n_rej in runs:
             rated = n_acc + n_rej
             if rated == 0:
                 quality_ok = None
@@ -146,7 +151,7 @@ def seed(project_name: str = "demo-api") -> None:
 
         db.commit()
         print(
-            f"Seeded {len(_RUNS)} runs for {project_name!r} (id {project.id}): "
+            f"Seeded {len(runs)} runs for {project_name!r} (id {project.id}): "
             f"{banked} banked · {risk} quality-risk · {unrated} unrated · "
             f"selected={selected.name} baseline={baseline.name}"
         )
@@ -155,4 +160,6 @@ def seed(project_name: str = "demo-api") -> None:
 
 
 if __name__ == "__main__":
-    seed(sys.argv[1] if len(sys.argv) > 1 else "demo-api")
+    name = sys.argv[1] if len(sys.argv) > 1 else "demo-api"
+    count = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    seed(name, count)
