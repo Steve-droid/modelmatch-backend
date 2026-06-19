@@ -135,6 +135,28 @@ class Settings(BaseSettings):
     # true). Even when on, debug carries no secrets/refs/raw DB errors (see api/chat).
     chat_debug_enabled: bool = False
 
+    # Demo data auto-seed (P30). The catalog always seeds (idempotent); the demo
+    # DATASET — a demo user + project + a spread of CI runs — seeds only when
+    # DEMO_SEED is true, via a gated ArgoCD PostSync hook in demo/portfolio envs.
+    # Deterministic, zero tokens. The password is the demo user's LOGIN credential,
+    # so in-cluster it arrives via ESO (Secrets Manager), never Git. Backend pods
+    # leave DEMO_SEED off, so these are inert there.
+    demo_seed: bool = False
+    demo_seed_email: str | None = None
+    demo_seed_password: str | None = None
+    demo_seed_project: str = "demo-api"
+    demo_seed_run_count: int = Field(default=30, ge=1)
+
+    @model_validator(mode="after")
+    def _require_demo_creds_when_seeding(self) -> "Settings":
+        # If the demo seed is enabled, the user creds it creates must be present —
+        # fail fast in the seed Job rather than half-create a login-less user.
+        if self.demo_seed and not (self.demo_seed_email and self.demo_seed_password):
+            raise ValueError(
+                "DEMO_SEED is on but DEMO_SEED_EMAIL / DEMO_SEED_PASSWORD are unset."
+            )
+        return self
+
     @property
     def chat_database_url(self) -> str:
         """The read-only chat DSN: the app database, but authenticating as the
