@@ -56,3 +56,21 @@ def load_seed(db: Session, path: Path = SEED_PATH) -> int:
         _upsert_runtime_config(db, raw)
     db.commit()
     return len(rows)
+
+
+def main() -> None:
+    """CLI entrypoint (`python -m app.catalog.seed`) — the catalog half of the P30
+    auto-seed hook. Always safe to run: load_seed upserts per natural key. No LLM,
+    zero tokens. Imported lazily so importing this module never opens a DB engine."""
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        count = load_seed(db)
+        print(f"catalog rows seeded: {count}")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()
