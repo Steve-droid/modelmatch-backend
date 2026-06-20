@@ -42,6 +42,17 @@ def gitFact(String cmd) {
   return sh(script: "(${cmd}) 2>/dev/null || true", returnStdout: true).trim()
 }
 
+// Wrap slackSend so a missing/misconfigured Slack plugin doesn't flip a green build
+// red from a post.success throw — log + continue instead. A post.success that throws
+// is treated as a stage failure; we'd rather lose the notification than the build.
+def slackOrLog(Map args) {
+  try {
+    slackSend(args)
+  } catch (Throwable t) {
+    echo "WARN: slackSend failed — ${t.class.simpleName}: ${t.message?.take(200) ?: '(no message)'}"
+  }
+}
+
 // Slack notification mirroring the toxictypo template, adapted for GitHub (commit URL
 // is `<repo>/commit/<sha>`, not GitLab's `/-/commit/`; no updateGitlabCommitStatus).
 // `env.FAILED_STAGE` is set at the start of every stage so the failure message can
@@ -65,7 +76,7 @@ def notifySlack(boolean ok) {
   def commitDisplay = (repoUrl && fullCommit) ? "<${repoUrl}/commit/${fullCommit}|${shortCommit}>" : shortCommit
   def jobInfo = "${env.JOB_NAME ?: 'unknown-job'} #${env.BUILD_NUMBER ?: '?'}"
   if (ok) {
-    slackSend channel: '#jenkins-steve', color: 'good', message: """\
+    slackOrLog channel: '#jenkins-steve', color: 'good', message: """\
 ✅ Build passed (${jobInfo})
 Branch: ${branchName}
 Commit: ${commitDisplay}
@@ -74,7 +85,7 @@ Pushed by: ${pushedBy}"""
   } else {
     def stageName = env.FAILED_STAGE ?: 'unknown'
     def failedStageDisplay = env.BUILD_URL ? "<${env.BUILD_URL}console|${stageName}>" : stageName
-    slackSend channel: '#jenkins-steve', color: 'danger', message: """\
+    slackOrLog channel: '#jenkins-steve', color: 'danger', message: """\
 ❌ Build failed (${jobInfo})
 Branch: ${branchName}
 Commit: ${commitDisplay}
