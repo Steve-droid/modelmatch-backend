@@ -5,11 +5,15 @@
 # disposable, and every `down` drops the volume so the next run starts empty.
 #
 # Subcommands:
-#   ci/e2e-stack.sh up-db   # only Postgres — for the Integration stage (pytest builds
-#                           #   its own throwaway DB on it via tests/conftest.py)
-#   ci/e2e-stack.sh up      # full stack: db -> migrate+seed -> backend -> frontend,
-#                           #   then wait for the backend /healthz (for the E2E stage)
-#   ci/e2e-stack.sh down    # docker compose down -v --remove-orphans (volume gone)
+#   ci/e2e-stack.sh up-db        # only Postgres — for the DB-backed contract test stage
+#                                #   (pytest builds its own throwaway DB on it via
+#                                #   tests/conftest.py)
+#   ci/e2e-stack.sh up-backend   # db -> migrate+seed -> backend (NO frontend) — for the
+#                                #   Container Integration stage (P31): backend candidate
+#                                #   image ↔ real Postgres, driven by an HTTP smoke.
+#   ci/e2e-stack.sh up           # full stack: db -> migrate+seed -> backend -> frontend,
+#                                #   then wait for the backend /healthz (for the E2E stage)
+#   ci/e2e-stack.sh down         # docker compose down -v --remove-orphans (volume gone)
 #
 # Caller provides via env (the pipeline sets these; local defaults are fine):
 #   COMPOSE_PROJECT_NAME   isolates networks/volumes for concurrent builds (default mm-be-ci)
@@ -79,6 +83,18 @@ case "$cmd" in
     wait_for "Postgres at localhost:${POSTGRES_PORT}" \
       "$DC exec -T db pg_isready -U modelmatch -d modelmatch"
     ;;
+  up-backend)
+    # P31 Container Integration: prove the backend candidate IMAGE talks to a real
+    # Postgres + serves the API. Bring up db -> migrate (alembic + seed) -> backend, but
+    # NOT frontend (the FE boundary smoke lives in the FE pipeline). The migrate service
+    # gates `backend` via depends_on: service_completed_successfully, so when /readyz
+    # returns the schema is in place and the catalog is seeded.
+    : "${JWT_SECRET:?set JWT_SECRET (a throwaway value for the CI stack)}"
+    down >/dev/null 2>&1 || true
+    $DC up -d db migrate backend
+    wait_for "backend /readyz at http://localhost:${BACKEND_PORT}/readyz" \
+      "curl -fsS http://localhost:${BACKEND_PORT}/readyz"
+    ;;
   up)
     : "${JWT_SECRET:?set JWT_SECRET (a throwaway value for the CI stack)}"
     down >/dev/null 2>&1 || true
@@ -92,7 +108,7 @@ case "$cmd" in
     down
     ;;
   *)
-    echo "usage: $0 {up-db|up|down}" >&2
+    echo "usage: $0 {up-db|up-backend|up|down}" >&2
     exit 2
     ;;
 esac

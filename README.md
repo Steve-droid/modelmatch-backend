@@ -187,12 +187,24 @@ runs **offline at zero token cost** (Postgres must be up — `docker compose up 
 
 ```bash
 uv run pytest                          # full suite (fake LLM, offline)
-uv run pytest -m "not integration"     # unit only (no DB)
-uv run pytest -m integration           # DB-backed tests (real Postgres)
+uv run pytest -m "not integration"     # unit / fast contract checks (no DB)
+uv run pytest -m integration           # DB-backed contract tests (real Postgres, in-process)
 
 # Live, GATED (spends real tokens — deliberate only)
 RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_live.py
 ```
+
+After P31 the CI test ladder is **unit → container integration → E2E**:
+
+- **Unit / fast contract checks** — pytest `-m "not integration"`, fake LLM, no DB.
+- **DB-backed contract tests** — pytest `-m integration` against a throwaway compose Postgres;
+  imports `app.*` directly. Catches contract regressions cheaply but cannot prove the IMAGE works.
+- **Container Integration** — the freshly-built backend image runs against a real Postgres in
+  sibling containers (`ci/e2e-stack.sh up-backend`) and an HTTP smoke (`ci/integration-smoke.sh`)
+  exercises `/readyz`, the auth round-trip, the seeded recommender, and one `/projects` write +
+  read — **only** over the wire, never an in-process import.
+- **E2E** — Playwright over the full FE+BE+Postgres throwaway compose stack; fake-LLM by default,
+  one gated `e2e-live` real-Bedrock smoke on `main` / `#e2e-live` only.
 
 ## CI/CD Pipelines
 
@@ -212,12 +224,13 @@ graph LR
     C --> D[Unit test<br/>no containers]
     D --> E[Full: Package BE image]
     E --> F[Trivy scan]
-    F --> G[Integration<br/>real Postgres]
-    G --> H[E2E<br/>throwaway compose]
-    H --> I[e2e-live · gated<br/>one real Nova call]
-    I --> J[Tag · main]
-    J --> K[Publish ECR · main]
-    K --> L[Deploy<br/>gitops bump · main]
+    F --> G[DB-backed contract<br/>pytest, real Postgres]
+    G --> H[Container Integration<br/>BE image · HTTP smoke]
+    H --> I[E2E<br/>throwaway compose]
+    I --> J[e2e-live · gated<br/>one real Nova call]
+    J --> K[Tag · main]
+    K --> L[Publish ECR · main]
+    L --> M[Deploy<br/>gitops bump · main]
 ```
 
 The **Deploy** stage bumps `backend.image.tag` in the [gitops](../modelmatch-gitops) umbrella; ArgoCD

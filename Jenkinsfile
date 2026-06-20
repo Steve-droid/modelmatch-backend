@@ -1,8 +1,9 @@
-// modelmatch-backend CI/CD pipeline (P18). Multibranch job on the persistent Jenkins
-// controller. Two ordered stage groups + a release tail:
+// modelmatch-backend CI/CD pipeline (P18; test taxonomy refined in P31). Multibranch
+// job on the persistent Jenkins controller. Two ordered stage groups + a release tail:
 //   FAST    — Build -> Bandit/pip-audit gate -> unit test (no containers, fake LLM).
-//   FULL    — Package BE image -> Trivy -> Integration (real Postgres) -> E2E (compose) ->
-//             [main only] e2e-live (one real Nova call).
+//   FULL    — Package BE image -> Trivy -> DB-backed contract tests (pytest, in-process)
+//             -> Container Integration (BE candidate image ↔ Postgres, HTTP smoke) ->
+//             E2E (compose, full stack) -> [main only] e2e-live (one real Nova call).
 //   RELEASE — [main] Tag (SemVer) -> Publish (ECR) -> Deploy (gitops image-tag bump).
 // FAST runs on every push; FULL runs on feature/* and main only (other branches stop after FAST);
 // e2e-live + RELEASE run on main only; FAST_ONLY skips FULL on demand.
@@ -183,15 +184,18 @@ pipeline {
           }
         }
 
-        stage('Integration (real Postgres)') {
-          // API + ORM tests against a real Postgres from a throwaway compose `db` (conftest
-          // creates its DB + runs alembic). Fake LLM. Never the cluster/dev DB.
+        stage('DB-backed contract tests (pytest)') {
+          // Fast in-process API + ORM coverage against a real Postgres from a throwaway
+          // compose `db` (conftest creates its DB + runs alembic). The TEST CODE imports
+          // app modules directly — there is NO candidate image involved here; this is
+          // *contract* coverage, not the container integration gate (see next stage).
+          // Fake LLM. Never the cluster/dev DB.
           steps {
             script {
               String pgPort = sh(script: './ci/free-ports.sh 1', returnStdout: true).trim()
               String jwt = sh(script: 'openssl rand -hex 32', returnStdout: true).trim()
               withEnv([
-                "COMPOSE_PROJECT_NAME=mm-be-int-${env.RUN_ID}",
+                "COMPOSE_PROJECT_NAME=mm-be-contract-${env.RUN_ID}",
                 "BACKEND_IMAGE=${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_CANDIDATE}",
                 "POSTGRES_PORT=${pgPort}",
                 "JWT_SECRET=${jwt}",
@@ -213,7 +217,48 @@ pipeline {
           }
           post {
             always {
-              sh 'COMPOSE_PROJECT_NAME=mm-be-int-${RUN_ID} ./ci/e2e-stack.sh down || true'
+              sh 'COMPOSE_PROJECT_NAME=mm-be-contract-${RUN_ID} ./ci/e2e-stack.sh down || true'
+            }
+          }
+        }
+
+        stage('Container Integration (BE image, HTTP smoke)') {
+          // P31 boundary smoke: prove the freshly-built backend IMAGE (gunicorn + DB
+          // driver + entrypoint + migrations + seed data) actually serves the API over
+          // HTTP. No FE, no Playwright — a thin curl/python smoke against /readyz, the
+          // auth round-trip, the seeded recommender, and one /projects write+read.
+          // Isolated compose project name + free ports + `down -v` cleanup. Fake LLM.
+          steps {
+            script {
+              def ports = sh(script: './ci/free-ports.sh 2', returnStdout: true).trim().split(/\s+/)
+              String bePort = ports[0]
+              String pgPort = ports[1]
+              String jwt = sh(script: 'openssl rand -hex 32', returnStdout: true).trim()
+
+              withEnv([
+                "COMPOSE_PROJECT_NAME=mm-be-cint-${env.RUN_ID}",
+                "BACKEND_IMAGE=${env.ECR_REGISTRY}/${env.ECR_REPO}:${env.IMAGE_CANDIDATE}",
+                "JWT_SECRET=${jwt}",
+                "BACKEND_PORT=${bePort}",
+                "POSTGRES_PORT=${pgPort}",
+                // No FE involved; pin PUBLIC_BASE_URL / CORS at the backend port so the
+                // container is internally self-consistent without a browser origin.
+                "PUBLIC_BASE_URL=http://localhost:${bePort}",
+                "CORS_ALLOW_ORIGINS=http://localhost:${bePort}",
+                "LLM_CLIENT=fake",
+              ]) {
+                sh './ci/e2e-stack.sh up-backend'
+                sh """
+                  set -eu
+                  E2E_API_BASE="http://localhost:${bePort}" BUILD_NUMBER="${env.BUILD_NUMBER}" \
+                    ./ci/integration-smoke.sh
+                """
+              }
+            }
+          }
+          post {
+            always {
+              sh 'COMPOSE_PROJECT_NAME=mm-be-cint-${RUN_ID} ./ci/e2e-stack.sh down || true'
             }
           }
         }
