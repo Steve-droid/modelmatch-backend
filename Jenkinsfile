@@ -32,6 +32,62 @@ def runUv(String cmd) {
   """
 }
 
+// Read a piece of git metadata for the notification with a SOFT fallback: a missing
+// .git (checkout failed) or a failed git command yields '' instead of throwing — so
+// the Slack notification still fires even on a pre-checkout / early failure.
+def gitFact(String cmd) {
+  return sh(script: "(${cmd}) 2>/dev/null || true", returnStdout: true).trim()
+}
+
+// Wrap slackSend so a missing/misconfigured Slack plugin doesn't flip a green build
+// red from a post.success throw — log + continue instead. A post.success that throws
+// is treated as a stage failure; we'd rather lose the notification than the build.
+def slackOrLog(Map args) {
+  try {
+    slackSend(args)
+  } catch (Throwable t) {
+    echo "WARN: slackSend failed — ${t.class.simpleName}: ${t.message?.take(200) ?: '(no message)'}"
+  }
+}
+
+// Slack notification mirroring the toxictypo template, adapted for GitHub (commit URL
+// is `<repo>/commit/<sha>`, not GitLab's `/-/commit/`; no updateGitlabCommitStatus).
+// `env.FAILED_STAGE` is set at the start of every stage so the failure message can
+// name + link to the stage that broke. Tolerant of git-metadata failures — an early
+// checkout failure still surfaces a job/build/stage Slack notification.
+def notifySlack(boolean ok) {
+  def branchName  = env.BRANCH_NAME ?: (env.JOB_NAME ? env.JOB_NAME.replaceAll('%2F', '/') : 'unknown')
+  def pushedBy    = gitFact('git log -1 --pretty=format:"%an"') ?: 'unknown'
+  def shortCommit = gitFact('git rev-parse --short=7 HEAD')      ?: 'unknown'
+  def fullCommit  = gitFact('git rev-parse HEAD')
+  def commitMsg   = gitFact('git log -1 --pretty=format:"%s"')   ?: '(commit message unavailable)'
+  def repoUrl     = gitFact('git remote get-url origin')
+    .replace('git@github.com:', 'https://github.com/')
+    .replaceAll(/\.git$/, '')
+  // Hide the commit link entirely when either piece is missing — a dangling Markdown
+  // link would render badly in Slack.
+  def commitDisplay = (repoUrl && fullCommit) ? "<${repoUrl}/commit/${fullCommit}|${shortCommit}>" : shortCommit
+  def jobInfo = "${env.JOB_NAME ?: 'unknown-job'} #${env.BUILD_NUMBER ?: '?'}"
+  if (ok) {
+    slackOrLog channel: '#jenkins-steve', color: 'good', message: """\
+✅ Build passed (${jobInfo})
+Branch: ${branchName}
+Commit: ${commitDisplay}
+Commit message: "${commitMsg}"
+Pushed by: ${pushedBy}"""
+  } else {
+    def stageName = env.FAILED_STAGE ?: 'unknown'
+    def failedStageDisplay = env.BUILD_URL ? "<${env.BUILD_URL}console|${stageName}>" : stageName
+    slackOrLog channel: '#jenkins-steve', color: 'danger', message: """\
+❌ Build failed (${jobInfo})
+Branch: ${branchName}
+Commit: ${commitDisplay}
+Commit message: "${commitMsg}"
+Pushed by: ${pushedBy}
+Failed Stage: ${failedStageDisplay}"""
+  }
+}
+
 pipeline {
   agent any
 
@@ -56,6 +112,7 @@ pipeline {
     stage('Source + config') {
       steps {
         script {
+          env.FAILED_STAGE = 'Source + config'
           // Clean checkout: CleanBeforeCheckout wipes the workspace first; reuse the
           // Multibranch job's branch + deploy key. Capture scmVars for GIT_COMMIT (not
           // pre-populated under skipDefaultCheckout).
@@ -123,11 +180,15 @@ pipeline {
       stages {
         stage('Build (uv sync)') {
           // Resolve locked deps into a workspace .venv once; later stages reuse it (--no-sync).
-          steps { runUv('uv sync --frozen --extra bedrock') }
+          steps {
+            script { env.FAILED_STAGE = 'Build (uv sync)' }
+            runUv('uv sync --frozen --extra bedrock')
+          }
         }
 
         stage('Static/dep gate (Bandit + pip-audit)') {
           steps {
+            script { env.FAILED_STAGE = 'Static/dep gate (Bandit + pip-audit)' }
             // Bandit SAST over app + agent; hard gate on HIGH severity AND HIGH confidence.
             runUv('uv run --no-sync bandit -r app agent --severity-level high --confidence-level high -q')
             // pip-audit over the runtime deps only (the set the image ships). Remediate-not-
@@ -138,7 +199,10 @@ pipeline {
 
         stage('Test (unit, no containers)') {
           // Unit suite only (-m "not integration" → no Postgres). Fake LLM, zero tokens.
-          steps { runUv('LLM_CLIENT=fake uv run --no-sync pytest -m "not integration" -q') }
+          steps {
+            script { env.FAILED_STAGE = 'Test (unit, no containers)' }
+            runUv('LLM_CLIENT=fake uv run --no-sync pytest -m "not integration" -q')
+          }
         }
       }
     }
@@ -160,13 +224,17 @@ pipeline {
       stages {
         stage('Package (BE image)') {
           // Build the backend image with the per-build candidate tag; promoted to SemVer on main.
-          steps { sh 'docker build -t "$ECR_REGISTRY/$ECR_REPO:$IMAGE_CANDIDATE" .' }
+          steps {
+            script { env.FAILED_STAGE = 'Package (BE image)' }
+            sh 'docker build -t "$ECR_REGISTRY/$ECR_REPO:$IMAGE_CANDIDATE" .'
+          }
         }
 
         stage('Trivy image scan') {
           // Gate on fixable CRITICAL + HIGH (--ignore-unfixed) so unpatched base-OS CVEs
           // don't permanently block; .trivyignore holds documented per-CVE waivers (none yet).
           steps {
+            script { env.FAILED_STAGE = 'Trivy image scan' }
             sh '''
               set -eu
               docker run --rm \
@@ -192,6 +260,7 @@ pipeline {
           // Fake LLM. Never the cluster/dev DB.
           steps {
             script {
+              env.FAILED_STAGE = 'DB-backed contract tests (pytest)'
               String pgPort = sh(script: './ci/free-ports.sh 1', returnStdout: true).trim()
               String jwt = sh(script: 'openssl rand -hex 32', returnStdout: true).trim()
               withEnv([
@@ -230,6 +299,7 @@ pipeline {
           // Isolated compose project name + free ports + `down -v` cleanup. Fake LLM.
           steps {
             script {
+              env.FAILED_STAGE = 'Container Integration (BE image, HTTP smoke)'
               def ports = sh(script: './ci/free-ports.sh 2', returnStdout: true).trim().split(/\s+/)
               String bePort = ports[0]
               String pgPort = ports[1]
@@ -268,6 +338,7 @@ pipeline {
           // FE(ECR)+BE(candidate)+Postgres stack -> migrate+seed -> Playwright smoke. Fake LLM.
           steps {
             script {
+              env.FAILED_STAGE = 'E2E (throwaway compose, fake LLM)'
               def ports = sh(script: './ci/free-ports.sh 3', returnStdout: true).trim().split(/\s+/)
               String fePort = ports[0]
               String bePort = ports[1]
@@ -323,6 +394,7 @@ pipeline {
           when { branch 'main' }
           steps {
             script {
+              env.FAILED_STAGE = 'E2E live (gated real-Bedrock)'
               def ports = sh(script: './ci/free-ports.sh 3', returnStdout: true).trim().split(/\s+/)
               String fePort = ports[0]
               String bePort = ports[1]
@@ -381,6 +453,7 @@ pipeline {
                                                keyFileVariable: 'BE_KEY',
                                                usernameVariable: 'BE_USER')]) {
               script {
+                env.FAILED_STAGE = 'Tag'
                 env.RELEASE_VERSION = sh(returnStdout: true, script: '''
                   set -eu
                   export GIT_SSH_COMMAND="ssh -i $BE_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
@@ -434,6 +507,7 @@ pipeline {
         stage('Publish (ECR)') {
           // Promote the scanned candidate image to the SemVer tag (instance role).
           steps {
+            script { env.FAILED_STAGE = 'Publish (ECR)' }
             sh '''
               set -eu
               aws ecr get-login-password --region "$AWS_DEFAULT_REGION" \
@@ -449,6 +523,7 @@ pipeline {
           // The only deploy action: bump the backend app image tag AND the migrate-job
           // image tag in gitops, then push; ArgoCD syncs from there. Never a hand kubectl/helm.
           steps {
+            script { env.FAILED_STAGE = 'Deploy (gitops bump)' }
             withCredentials([sshUserPrivateKey(credentialsId: env.CRED_GITOPS_KEY,
                                                keyFileVariable: 'GITOPS_KEY',
                                                usernameVariable: 'GITOPS_USER')]) {
@@ -482,11 +557,16 @@ pipeline {
 
   post {
     always {
-      // TODO: notify
       // Remove the per-build candidate image so the persistent controller doesn't accumulate
       // layers on disk. Guarded: IMAGE_CANDIDATE is unset if we failed before Source+config.
       sh 'if [ -n "${IMAGE_CANDIDATE:-}" ]; then docker image rm -f "$ECR_REGISTRY/$ECR_REPO:$IMAGE_CANDIDATE" || true; fi'
     }
-    success { echo "P18 backend pipeline GREEN on ${env.BRANCH_NAME}" }
+    success {
+      echo "P18 backend pipeline GREEN on ${env.BRANCH_NAME}"
+      script { notifySlack(true) }
+    }
+    failure {
+      script { notifySlack(false) }
+    }
   }
 }
