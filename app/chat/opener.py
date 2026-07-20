@@ -43,7 +43,8 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     k = savings.kpis
     selected = savings.selected_model or "the selected model"
     baseline = savings.baseline_model or "the baseline"
-    rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate:.0f}%"
+    # acceptance_rate is a 0–1 fraction (see app.quality.service); scale for display.
+    rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate * 100:.0f}%"
     lines = [
         "Spend summary (authoritative — computed by ModelMatch, not by you):",
         f"- Selected model (runs the CI review agent): {selected}",
@@ -86,12 +87,14 @@ def build_opener(savings: SavingsResponse) -> str:
 
     if k.quality_status == "banking":
         quality_line = (
-            f"Review quality is holding — finding acceptance is {_pct(k.acceptance_rate)}, "
+            f"Review quality is holding — finding acceptance is "
+            f"{_pct(None if k.acceptance_rate is None else k.acceptance_rate * 100)}, "
             f"at or above your {k.threshold * 100:.0f}% threshold — so those savings count."
         )
     elif k.quality_status == "quality_risk":
         quality_line = (
-            f"Heads up: finding acceptance is {_pct(k.acceptance_rate)}, below your "
+            f"Heads up: finding acceptance is "
+            f"{_pct(None if k.acceptance_rate is None else k.acceptance_rate * 100)}, below your "
             f"{k.threshold * 100:.0f}% threshold, so {_money(k.quality_risk)} of savings is "
             "flagged as quality risk and kept out of the headline."
         )
