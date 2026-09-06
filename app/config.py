@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     # throughput isn't supported"); the inference profile is required (verified live,
     # S5b 2026-06-07). Other regions use their own prefix (us./eu.).
     bedrock_model_id: str = "apac.amazon.nova-lite-v1:0"  # in-cluster ingestion + chat
-    s3_bucket: str = "modelmatch-ingestion-sources"  # ingestion source docs land here
+    s3_bucket: str = "modelmatch-ingestion-sources-957261948820"  # ingestion source docs land here
 
     # Blob store for ingestion source bytes (S5b). Only `fake` (in-process, dev/tests)
     # is implemented today; the S3/IRSA adapter lands with the infra story. A Literal

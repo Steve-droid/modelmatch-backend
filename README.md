@@ -167,7 +167,7 @@ Config is read from env via `pydantic-settings` (no hardcoded secrets/URLs). The
 | `LLM_CLIENT` | `fake` | **in-cluster** LLM surface: `fake` \| `bedrock` (Nova via IRSA) |
 | `BEDROCK_MODEL_ID` | `apac.amazon.nova-lite-v1:0` | in-cluster Nova (ap-south-1 needs the `apac.` inference profile) |
 | `AWS_REGION` | `ap-south-1` | region for Bedrock + S3 |
-| `S3_BUCKET` | `modelmatch-ingestion-sources` | ingestion source docs |
+| `S3_BUCKET` | `modelmatch-ingestion-sources-957261948820` | ingestion source docs |
 | `LLM_HOURLY_TOKEN_CAP` | `200000` | hard hourly cap on our Nova spend — **aborts (429)**, not an alert |
 | `BLOB_STORE` / `SECRET_STORE` | `fake` / `fake` | ingestion blob / secret-ref backends (`s3` / `aws` in-cluster) |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` | where the user's Jenkins POSTs `ci-runs` back (embedded in the snippet) |
