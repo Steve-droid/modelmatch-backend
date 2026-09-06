@@ -285,7 +285,7 @@ templated `/config.js` served by nginx; for local dev Vite reads `VITE_`-prefixe
 | `FEATURE_PROACTIVE_ADVISOR` | `false` | separable advisor (bonus); off by default |
 | `AWS_REGION` | `ap-south-1` | region for Bedrock / S3 |
 | `BEDROCK_MODEL_ID` | `apac.amazon.nova-lite-v1:0` | in-cluster ingestion + chat model (ap-south-1 needs the `apac.` inference profile) |
-| `S3_BUCKET` | `modelmatch-ingestion-sources` | ingestion source docs (when `BLOB_STORE=s3`) |
+| `S3_BUCKET` | `modelmatch-ingestion-sources-957261948820` | ingestion source docs (when `BLOB_STORE=s3`) |
 | `LLM_CLIENT` | `fake` | **in-cluster** surface: `fake` \| `bedrock` (Nova via IRSA) |
 | `LLM_FIXTURES_DIR` | `tests/fixtures/llm_responses` | recorded fixtures for the fake client |
 | `BLOB_STORE` | `fake` | ingestion blob backend: `fake` today; `s3` later |
