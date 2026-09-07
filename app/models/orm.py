@@ -46,7 +46,13 @@ TRACE_KIND = ENUM("savings", "benchmark_result", name="trace_kind", create_type=
 LLM_PURPOSE = ENUM("ingestion", "chat", "agent", name="llm_purpose", create_type=False)
 ALERT_KIND = ENUM("upgrade", "downgrade", name="alert_kind", create_type=False)
 AGENT_PROVIDER = ENUM(
-    "anthropic", "gemini", "bedrock", "deepseek", name="agent_provider", create_type=False
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "deepseek",
+    "openai",
+    name="agent_provider",
+    create_type=False,
 )
 AGENT_AUTH_MODE = ENUM("api_key", "aws_iam", name="agent_auth_mode", create_type=False)
 

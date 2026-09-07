@@ -515,5 +515,15 @@
    "credential_env_var": "DEEPSEEK_API_KEY",
    "enabled": true
   }
+,
+  {
+   "model": "GPT-5.5",
+   "vendor": "OpenAI",
+   "provider": "openai",
+   "provider_model_id": "gpt-5.5",
+   "auth_mode": "api_key",
+   "credential_env_var": "OPENAI_API_KEY",
+   "enabled": true
+  }
  ]
 }

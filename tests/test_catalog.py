@@ -111,17 +111,18 @@ def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
     rows = db_session.scalars(
         select(AgentRuntimeConfig).join(Model).order_by(Model.vendor, Model.name)
     ).all()
-    # Every model the CI agent can actually execute on Steve's keys: the Anthropic
-    # line (Haiku, Sonnet 4.5, Opus 5), the Google line (2.5 Flash, 2.5 Pro, 3.1 Pro,
-    # 3.5 Flash) and Nova 2 Lite via Bedrock. Since P38c this set is also what the
-    # recommender is allowed to PICK from, so a missing row silently shrinks the
-    # shortlist — hence the exact count.
+    # Every model the CI agent is verified to drive (on the user's own key): the
+    # Anthropic line (Haiku, Sonnet 4.5, Opus 5), the Google line (2.5 Flash, 2.5 Pro,
+    # 3.1 Pro, 3.5 Flash), Nova 2 Lite via Bedrock, and — security task only, through
+    # OpenCode — DeepSeek V4 Flash (P38g) and GPT-5.5 (P38h). Since P38c this set is
+    # also what the recommender is allowed to PICK from, so a missing row silently
+    # shrinks the shortlist — hence the exact count.
     import json
 
     from app.catalog.seed import SEED_PATH
 
     expected = json.loads(SEED_PATH.read_text())["agent_runtime_configs"]
-    assert len(rows) == len(expected) == 9
+    assert len(rows) == len(expected) == 10
 
     by_model = {row.model.name: row for row in rows}
     haiku = by_model["Claude Haiku 4.5"]
