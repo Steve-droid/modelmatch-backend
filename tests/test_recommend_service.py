@@ -32,7 +32,10 @@ def _auth_header(client) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
+def test_review_task_picks_the_cheap_high_value_model(client, db_session):
+    """The product's headline pick: on the CI-review task the recommender chooses
+    Claude Haiku 4.5 — 85.0 review score against the baseline's 87.1, at a third of
+    the price — and reports the group it compared within."""
     load_seed(db_session)
     headers = _auth_header(client)
 
@@ -48,13 +51,10 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
     assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
     assert body["comparabilityGroup"]["metric"] == "review_score_percent"
 
-    # cost-leaning (w_q=0.40): the cheapest CodeReviewBench row wins — the illustrative
-    # Nova 2 Lite (68.0 @ $0.85), ahead of Haiku. (Quality-leaning flips back to Haiku —
-    # see test_budget_sensitivity_steers_the_pick.)
     assert body["suggested"]["rank"] == 1
-    assert body["suggested"]["model"] == "Nova 2 Lite"
+    assert body["suggested"]["model"] == "Claude Haiku 4.5"
 
-    # baseline = the configured model NAME, found in-group, with its model identity
+    # baseline = the model configured FOR THIS TASK, found in-group, with its identity
     assert body["baseline"]["model"] == "Claude Sonnet 4.5"
     assert body["baseline"]["selection"] == "configured"
     assert float(body["baseline"]["costPerMtok"]) == 6.0  # blended (3*3 + 15)/4
@@ -71,30 +71,49 @@ def test_high_sensitivity_picks_cheap_high_value_model(client, db_session):
         assert "rankScore" in o and "benchmarkResultId" in o
 
 
+def test_security_task_uses_its_own_benchmark_and_baseline(client, db_session):
+    """P38c: a second task, measured by its own benchmark, with its own baseline.
+    Selecting security_analysis must never rank a review score against an F3 score."""
+    load_seed(db_session)
+    headers = _auth_header(client)
+
+    body = client.post(
+        "/recommendations",
+        json={"taskTypes": ["security_analysis"], "budgetSensitivity": "low"},
+        headers=headers,
+    ).json()
+
+    assert body["comparabilityGroup"]["benchmark"] == "RealVuln"
+    assert body["comparabilityGroup"]["metric"] == "f3_score"
+    # the security task's own configured baseline, not the review task's Sonnet
+    assert body["baseline"]["model"] == "Claude Opus 5"
+    assert body["baseline"]["selection"] == "configured"
+
+
 def test_budget_sensitivity_steers_the_pick(client, db_session):
-    """The cost<->quality slider visibly moves the WINNER, not just the spread. With the
-    curated CodeReviewBench data — Haiku (85.0 @ $2) and the illustrative Nova 2 Lite
-    (68.0 @ $0.85) — cost-leaning (high) picks the cheaper Nova, while quality-leaning
-    (medium/low) picks the higher-quality Haiku. This is the demo's headline behaviour."""
+    """The cost<->quality slider visibly moves the WINNER, not just the spread.
+
+    Demonstrated on the security task, whose benchmark spans a wide price range: a
+    quality-leaning setting buys the strongest scanner (Claude Opus 5, F3 67.7 at
+    $5/$25), while a cost-leaning setting trades score for a far cheaper model. This
+    is the demo's headline behaviour — the formula, not a model, makes the call."""
     load_seed(db_session)
     headers = _auth_header(client)
 
     def pick(sensitivity: str) -> dict:
         return client.post(
             "/recommendations",
-            json={"taskTypes": ["ci_review"], "budgetSensitivity": sensitivity},
+            json={"taskTypes": ["security_analysis"], "budgetSensitivity": sensitivity},
             headers=headers,
-        ).json()
+        ).json()["suggested"]
 
-    high = pick("high")      # cost-leaning  → cheapest competitive model
-    medium = pick("medium")  # balanced      → quality reasserts
-    low = pick("low")        # quality-leaning
+    cost_leaning = pick("high")
+    quality_leaning = pick("low")
 
-    assert high["suggested"]["model"] == "Nova 2 Lite"
-    assert medium["suggested"]["model"] == "Claude Haiku 4.5"
-    assert low["suggested"]["model"] == "Claude Haiku 4.5"
-    # the winner actually changes across the slider (not merely the runner-up gap)
-    assert high["suggested"]["model"] != low["suggested"]["model"]
+    assert quality_leaning["model"] == "Claude Opus 5"
+    # the winner actually changes across the slider, and changes in the right direction
+    assert cost_leaning["model"] != quality_leaning["model"]
+    assert float(cost_leaning["costPerMtok"]) < float(quality_leaning["costPerMtok"])
 
 
 def test_persists_profile_options_evidence(client, db_session):
@@ -177,20 +196,36 @@ def test_same_request_is_deterministic(client, db_session):
     assert [o["rankScore"] for o in a["shortlist"]] == [o["rankScore"] for o in b["shortlist"]]
 
 
-def test_multiple_task_types_rank_within_dominant_group(client, db_session):
+def test_task_types_from_two_benchmarks_are_rejected_not_voted_on(client, db_session):
+    """P38c: selecting task types measured by DIFFERENT benchmarks has no comparable
+    ranking, so the API says so (422) instead of silently ranking whichever group had
+    more rows. ci_review is measured by CodeReviewBench and agentic_coding by
+    SWE-bench Verified — a review score and a pass@1 score share no scale."""
+    load_seed(db_session)
+    headers = _auth_header(client)
+
+    resp = client.post(
+        "/recommendations",
+        json={"taskTypes": ["ci_review", "agentic_coding"], "budgetSensitivity": "medium"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "CodeReviewBench" in detail and "SWE-bench Verified" in detail
+
+
+def test_one_task_type_ranks_inside_its_own_benchmark(client, db_session):
+    """The flip side: each task type alone ranks cleanly within its single group."""
     load_seed(db_session)
     headers = _auth_header(client)
 
     body = client.post(
         "/recommendations",
-        json={"taskTypes": ["ci_review", "agentic_coding"], "budgetSensitivity": "medium"},
+        json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "medium"},
         headers=headers,
     ).json()
-    # The CI-review group (CodeReviewBench, 5 rows incl. the illustrative Nova) outnumbers
-    # the agentic_coding group (SWE-bench, 4 rows), so it's the dominant comparability
-    # group — we rank within it and never normalize a review_score row against a pass@1 row.
-    assert body["comparabilityGroup"]["benchmark"] == "CodeReviewBench"
-    assert body["comparabilityGroup"]["metric"] == "review_score_percent"
+    assert body["comparabilityGroup"]["benchmark"] == "SWE-bench Verified"
+    assert body["comparabilityGroup"]["metric"] == "pass@1_percent"
 
 
 def test_no_matching_task_types_is_422(client, db_session):
@@ -210,3 +245,66 @@ def test_recommendation_requires_auth(client):
         json={"taskTypes": ["agentic_coding"], "budgetSensitivity": "medium"},
     )
     assert resp.status_code == 401
+
+
+def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
+    """P38c: the recommendation must be deployable.
+
+    RealVuln scores 16 scanners, but we hold accounts for only two of them. Ranking
+    the rest would hand the user a confident pick their pipeline cannot run — so the
+    pick ranks only models with an enabled agent_runtime_config, and the response
+    reports both counts so the narrowing is visible rather than silent. The excluded
+    rows stay in the catalog and the chat. The bar is a credential, not a capability:
+    the security runtime (OpenCode) already speaks most of these providers, so the
+    ranked set widens by adding a key."""
+    load_seed(db_session)
+    headers = _auth_header(client)
+
+    body = client.post(
+        "/recommendations",
+        json={"taskTypes": ["security_analysis"], "budgetSensitivity": "high"},
+        headers=headers,
+    ).json()
+
+    group = body["comparabilityGroup"]
+    assert group["candidateCount"] == 16  # everything RealVuln scored
+    assert group["rankedCount"] == 2  # what we can actually run: Gemini 3.5 Flash, Opus 5
+    assert group["rankedCount"] < group["candidateCount"]
+
+    # the cost-leaning security pick is the runnable one, not the unrunnable cheapest
+    assert body["suggested"]["model"] == "Gemini 3.5 Flash"
+    assert body["baseline"]["model"] == "Claude Opus 5"
+
+    # and the full 16 rows are still in the catalog — the narrowing is the PICK's,
+    # not the data's
+    listed = client.get("/benchmarks", headers=headers).json()
+    security_rows = [r for r in listed if r["taskType"] == "security_analysis"]
+    assert len(security_rows) == 16
+
+
+def test_unrunnable_models_can_be_ranked_when_the_filter_is_off(
+    client, db_session, monkeypatch
+):
+    """The restriction is a policy, not a hard-wired rule: RECOMMEND_ONLY_RUNNABLE=false
+    ranks the whole catalog. Kept switchable so the honest-breadth view is one env var
+    away, and so this test documents exactly what the filter changes."""
+    from app.config import get_settings
+
+    load_seed(db_session)
+    headers = _auth_header(client)
+
+    monkeypatch.setenv("RECOMMEND_ONLY_RUNNABLE", "false")
+    get_settings.cache_clear()
+    try:
+        body = client.post(
+            "/recommendations",
+            json={"taskTypes": ["security_analysis"], "budgetSensitivity": "high"},
+            headers=headers,
+        ).json()
+    finally:
+        get_settings.cache_clear()
+
+    # unfiltered, the cheapest strong scanner wins on the formula — a model we have no
+    # way to run, which is exactly why the filter exists
+    assert body["comparabilityGroup"]["rankedCount"] == 16
+    assert body["suggested"]["model"] == "DeepSeek V4 Flash"

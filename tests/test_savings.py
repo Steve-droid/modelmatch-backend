@@ -121,13 +121,37 @@ def test_seed_populates_split_prices(db_session):
     )
 
 
-def test_seed_nova2_lite_review_row_is_labeled_illustrative_not_cited(db_session):
-    """Nova 2 Lite carries two rows: its REAL SWE-bench Verified row (cited from the
-    Amazon Nova 2 report) and a DEMO CodeReviewBench row whose review score is synthetic
-    — added so the budget slider can steer the pick (high→Nova). Integrity guard: the
-    demo row's `source` (the only provenance that reaches the API/chat) MUST flag it as
-    illustrative, so it can never be mistaken for a cited benchmark result; the real
-    SWE-bench row must NOT carry that label."""
+def test_no_seeded_row_carries_an_uncited_score(db_session):
+    """Integrity guard on the shipped catalog: every score must trace to a source.
+
+    Until P38c the seed carried ONE deliberate exception — a synthetic CodeReviewBench
+    review score for Nova 2 Lite (68.0), added so the budget slider had something to
+    steer between, and flagged "ILLUSTRATIVE / DEMO ONLY" in its `source`. P38c dropped
+    it: RealVuln supplies a real second task, so the demo no longer needs an invented
+    number, and a catalog with zero invented numbers is a much stronger claim than one
+    with a well-labelled exception. This test is the ratchet that keeps it that way."""
+    load_seed(db_session)
+
+    rows = db_session.scalars(
+        select(BenchmarkResult).join(
+            Benchmark, BenchmarkResult.benchmark_id == Benchmark.id
+        )
+    ).all()
+    assert rows
+
+    for row in rows:
+        source = (row.source or "").lower()
+        assert source, f"{row.benchmark.name} row for model {row.model_id} has no source"
+        for weasel in ("illustrative", "synthetic", "demo only", "not cited"):
+            assert weasel not in source, (
+                f"{row.benchmark.name} row cites itself as {weasel!r} — an uncited "
+                "score must not ship in the seed"
+            )
+
+
+def test_nova2_lite_keeps_its_real_swe_bench_row(db_session):
+    """Nova 2 Lite lost its synthetic review row but keeps its cited SWE-bench one —
+    it is still our in-cluster chat model and a priced, selectable CI runtime."""
     load_seed(db_session)
     nova = db_session.scalar(select(Model).where(Model.name == "Nova 2 Lite"))
     rows = db_session.scalars(
@@ -136,22 +160,14 @@ def test_seed_nova2_lite_review_row_is_labeled_illustrative_not_cited(db_session
         .where(BenchmarkResult.model_id == nova.id)
     ).all()
     by_bench = {r.benchmark.name: r for r in rows}
-    assert set(by_bench) == {"SWE-bench Verified", "CodeReviewBench"}
 
-    # real, cited SWE-bench row — unchanged, and NOT marked illustrative
+    assert set(by_bench) == {"SWE-bench Verified"}  # the CodeReviewBench row is gone
     swe = by_bench["SWE-bench Verified"]
     assert swe.task_type == "agentic_coding"
     assert swe.score == Decimal("53.6")
     assert "nova 2 technical report" in (swe.source or "").lower()
-    assert "illustrative" not in (swe.source or "").lower()
 
-    # demo CodeReviewBench row — synthetic score, explicitly flagged illustrative/demo
-    review = by_bench["CodeReviewBench"]
-    assert review.task_type == "ci_review"
-    assert review.score == Decimal("68.0")
-    assert "illustrative" in (review.source or "").lower()  # the honest-by-disclosure guard
-
-    # Nova 2 Lite is priced (selectable as a CI runtime) — both split halves present.
+    # still priced (selectable as a CI runtime) — both split halves present.
     assert nova.input_price_per_mtok == Decimal("0.3")
     assert nova.output_price_per_mtok == Decimal("2.5")
 

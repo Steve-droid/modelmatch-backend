@@ -9,6 +9,7 @@ The LLM never runs here: this is plain SQL. The LLM only *fills* the catalog
 (S5b ingestion); ranking over it stays deterministic (S6).
 """
 
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
@@ -17,6 +18,32 @@ from sqlalchemy.orm import Session
 
 from app.models import Benchmark, BenchmarkResult, Harness, Model
 from app.schemas.catalog import CatalogRowIn, CatalogRowOut
+
+
+class TaskBenchmarkConflict(Exception):
+    """Raised when a row would give a task type a SECOND (benchmark, metric) pair.
+
+    The recommender compares rows only within one (benchmark, metric) group, so a
+    task type owning two groups has no well-defined ranking (P38c replaced the old
+    "most rows wins" vote with this hard rule). Rejecting at write time means the
+    bad state is never created — by the seed, the ingest scripts, or POST /benchmarks.
+    """
+
+    def __init__(
+        self,
+        task_type: str,
+        existing: tuple[str, str],
+        incoming: tuple[str, str],
+    ) -> None:
+        self.task_type = task_type
+        self.existing = existing
+        self.incoming = incoming
+        super().__init__(
+            f"Task type {task_type!r} is already measured by "
+            f"{existing[0]!r} · {existing[1]!r}; refusing to add "
+            f"{incoming[0]!r} · {incoming[1]!r}. One benchmark and one metric per "
+            "task type — scores from different benchmarks are not comparable."
+        )
 
 # Ranking/display cost is blended 3:1 (input:output) — a code-review workload reads a
 # large diff and emits compact findings. Quantized to the cost column's 6-dp scale.
@@ -48,12 +75,31 @@ def get_or_create_model(db: Session, name: str, vendor: str) -> Model:
     return obj
 
 
-def get_or_create_benchmark(db: Session, name: str, task_type: str | None) -> Benchmark:
+def get_or_create_benchmark(
+    db: Session,
+    name: str,
+    task_type: str | None,
+    *,
+    as_of: date | None = None,
+    notes: str | None = None,
+) -> Benchmark:
+    """Get-or-create the benchmark dimension, refreshing its provenance (P38c).
+
+    `as_of` / `notes` are benchmark-level facts that arrive on each denormalized row.
+    They are refreshed last-write-wins when supplied and left alone when omitted, so
+    a partial upsert (e.g. POST /benchmarks with no date) never erases a date the
+    seed or an ingest already recorded.
+    """
     obj = db.scalar(select(Benchmark).where(Benchmark.name == name))
     if obj is None:
-        obj = Benchmark(name=name, task_type=task_type)
+        obj = Benchmark(name=name, task_type=task_type, as_of=as_of, notes=notes)
         db.add(obj)
         db.flush()
+        return obj
+    if as_of is not None and obj.as_of != as_of:
+        obj.as_of = as_of
+    if notes is not None and obj.notes != notes:
+        obj.notes = notes
     return obj
 
 
@@ -73,6 +119,29 @@ def get_or_create_harness(
     return obj
 
 
+def _assert_task_owns_one_group(db: Session, row: CatalogRowIn) -> None:
+    """Enforce the P38c invariant: one (benchmark, metric) pair per task type.
+
+    Untyped rows (task_type IS NULL) belong to no task and are never rankable, so
+    they are exempt. Checked BEFORE anything is written, so a rejected row leaves no
+    partial dimension rows behind.
+    """
+    if not row.task_type:
+        return
+    existing = db.execute(
+        select(Benchmark.name, BenchmarkResult.metric)
+        .join(Benchmark, BenchmarkResult.benchmark_id == Benchmark.id)
+        .where(BenchmarkResult.task_type == row.task_type)
+        .limit(1)
+    ).first()
+    if existing is None:
+        return
+    if (existing[0], existing[1]) != (row.benchmark, row.metric):
+        raise TaskBenchmarkConflict(
+            row.task_type, (existing[0], existing[1]), (row.benchmark, row.metric)
+        )
+
+
 def upsert_catalog_row(
     db: Session, row: CatalogRowIn, *, source_document_id: int | None = None
 ) -> CatalogRowOut:
@@ -83,6 +152,7 @@ def upsert_catalog_row(
     dedupe to one row — the latest ingest's provenance wins. A provenance-less upsert
     (seed / `POST /benchmarks`, id=None) never clears an existing link.
     """
+    _assert_task_owns_one_group(db, row)
     model = get_or_create_model(db, row.model, row.vendor)
     # Ranking/display blended price (NOT read by the S12 savings engine). DERIVED from
     # the split prices when present (never trusted from the LLM), so seed + ingested
@@ -100,7 +170,13 @@ def upsert_catalog_row(
         model.input_price_per_mtok = in_price
     if out_price is not None and model.output_price_per_mtok != out_price:
         model.output_price_per_mtok = out_price
-    benchmark = get_or_create_benchmark(db, row.benchmark, row.task_type)
+    benchmark = get_or_create_benchmark(
+        db,
+        row.benchmark,
+        row.task_type,
+        as_of=row.benchmark_as_of,
+        notes=row.benchmark_notes,
+    )
     harness = get_or_create_harness(db, row.harness, row.harness_vendor)
 
     mutable = {
@@ -142,6 +218,8 @@ def upsert_catalog_row(
         metric=row.metric,
         input_price_per_mtok=model.input_price_per_mtok,
         output_price_per_mtok=model.output_price_per_mtok,
+        benchmark_as_of=benchmark.as_of,
+        benchmark_notes=benchmark.notes,
         **mutable,
     )
 
@@ -170,6 +248,8 @@ def list_catalog(db: Session) -> list[CatalogRowOut]:
                 context_window=r.context_window,
                 source=r.source,
                 measured_at=r.measured_at,
+                benchmark_as_of=r.benchmark.as_of,
+                benchmark_notes=r.benchmark.notes,
             )
         )
     return rows

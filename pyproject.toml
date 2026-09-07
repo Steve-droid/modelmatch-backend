@@ -46,6 +46,11 @@ llm = [
 dev = [
     "pytest>=8.3",
     "httpx>=0.28",
+    # Only the offline catalog-ingest tool (`python -m app.catalog.ingest_realvuln`)
+    # parses YAML — it reads RealVuln's own price table. Dev-only on purpose: the
+    # runtime API image must not grow a dependency for an operator script, so the
+    # import is lazy and fails with a clear message if the tool runs without it.
+    "pyyaml>=6.0",
     # Static/dep security gate run by the CI pipeline (P18) — dev-only, never shipped
     # in the runtime image. Bandit = Python SAST; pip-audit = dependency CVE audit.
     "bandit>=1.8",

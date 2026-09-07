@@ -52,13 +52,44 @@ from app.schemas.recommend import RecommendationRequest
 _DEMO_TASK_TYPES = ["ci_review"]
 _DEMO_BUDGET_SENSITIVITY = "high"
 
-# The demo project's Jenkins connection. A placeholder host on the reserved .invalid
+# The demo projects' Jenkins connection. A placeholder host on the reserved .invalid
 # TLD — the demo never calls Jenkins (runs are seeded straight into the DB), it just
 # needs the connection + a minted CI token so the project reads "setup complete"
 # (app/projects/service.py: setup_complete = conn is not None and ci_token_hash is
 # not None) instead of badging "Setup incomplete" on the dashboard.
+#
+# The job name is DERIVED from the project name rather than being a constant: every
+# demo project gets its own `<project>/main` label. A literal here would badge every
+# project with the first one's job — demo-sec would read "demo-api/main" on the
+# dashboard and in the recording.
 _DEMO_JENKINS_BASE_URL = "https://jenkins.example.invalid"
-_DEMO_JENKINS_JOB = "demo-api/main"
+_DEMO_JENKINS_JOB_SUFFIX = "main"
+
+# P38c: a SECOND demo project for the security-analysis task, so the dashboard shows
+# the product's two tasks side by side — a cheap reviewer on every PR, and an agentic
+# vulnerability scan whose findings gate the build. Cost-leaning on RealVuln picks
+# Gemini 3.5 Flash against the Claude Opus 5 baseline.
+_DEMO_SECURITY_TASK_TYPES = ["security_analysis"]
+_DEMO_SECURITY_BUDGET_SENSITIVITY = "high"
+
+# Token volumes differ by an order of magnitude between the two tasks, and the demo
+# would look wrong if they did not. A review reads ONE diff and answers in a few
+# hundred tokens. A security scan is an agentic loop that reads a whole repository:
+# RealVuln's own Gemini 3.5 Flash run averaged 133,767 input and 4,170 output tokens
+# per repository, which is the scale used here.
+_REVIEW_TOKENS = (1_100, 650, 290, 200)  # (in_base, in_spread, out_base, out_spread)
+_SECURITY_TOKENS = (120_000, 30_000, 3_600, 1_200)
+
+# Security findings carry a CWE — the vocabulary a security scanner reports in, and
+# what the P38d agent will emit from its Semgrep-shaped output.
+_SECURITY_FINDINGS = [
+    ("security", "critical", "app/api/search.py", 64, "CWE-89: SQL injection — request parameter concatenated into a query"),
+    ("security", "high", "app/auth/session.py", 28, "CWE-798: hard-coded credential used as a signing key"),
+    ("security", "high", "app/api/files.py", 96, "CWE-22: path traversal — user input joined to a filesystem path"),
+    ("security", "medium", "app/templates/profile.html", 12, "CWE-79: reflected cross-site scripting in a rendered field"),
+    ("security", "medium", "app/net/client.py", 41, "CWE-918: server-side request forgery — URL taken from the request"),
+    ("security", "low", "app/crypto/hash.py", 19, "CWE-327: weak hash (MD5) used for a security decision"),
+]
 
 _THRESHOLD = Decimal("0.8")  # mirrors QUALITY_THRESHOLD (S13)
 _FINDINGS = [
@@ -71,7 +102,10 @@ _FINDINGS = [
 ]
 
 
-def make_runs(count: int = 30) -> list[tuple[int, int, int, int, int, int, int]]:
+def make_runs(
+    count: int = 30,
+    tokens: tuple[int, int, int, int] = _REVIEW_TOKENS,
+) -> list[tuple[int, int, int, int, int, int, int]]:
     """Deterministic CI-run generator — produces `count` runs across `count` days so
     the dashboard shows an arc: savings accumulate, with a few quality-risk runs
     (acceptance < 0.8) and a couple unrated runs (no feedback) so every KPI bucket +
@@ -79,12 +113,13 @@ def make_runs(count: int = 30) -> list[tuple[int, int, int, int, int, int, int]]
     banks. Same count → identical output (no randomness), so re-seeding is reproducible.
     Tuple shape: (build, days_ago, tokens_in, tokens_out, n_findings, n_accept, n_reject).
     """
+    in_base, in_spread, out_base, out_spread = tokens
     runs: list[tuple[int, int, int, int, int, int, int]] = []
     for i in range(count):
         build = 201 + i
         days_ago = count - i  # oldest first; most recent run = 1 day ago
-        tin = 1100 + (i * 37) % 650  # 1100–1749, deterministic spread
-        tout = 290 + (i * 13) % 200  # 290–489
+        tin = in_base + (i * 37) % in_spread  # deterministic spread, no randomness
+        tout = out_base + (i * 13) % out_spread
         n_find = 2 + (i % 5)  # 2–6 findings
         if i % 9 == 4:  # ~1 in 9 → unrated (no feedback at all)
             n_acc, n_rej = 0, 0
@@ -127,14 +162,22 @@ def _ensure_jenkins_setup(db: Session, project: Project, user: User) -> None:
         db,
         project.id,
         JenkinsConnectionUpdate(
-            base_url=_DEMO_JENKINS_BASE_URL, job_name=_DEMO_JENKINS_JOB
+            base_url=_DEMO_JENKINS_BASE_URL,
+            job_name=f"{project.name}/{_DEMO_JENKINS_JOB_SUFFIX}",
         ),
         user,
     )
     ci_setup(db, project.id, user)  # mints the token on first run; the value is dropped
 
 
-def _ensure_project(db: Session, user: User, project_name: str) -> Project:
+def _ensure_project(
+    db: Session,
+    user: User,
+    project_name: str,
+    *,
+    task_types: list[str] | None = None,
+    budget_sensitivity: str | None = None,
+) -> Project:
     """Get-or-create the demo project. On first run, generate a real recommendation
     (persists the options) and build the project from the suggested option + baseline
     via the same create_project service the API uses — so the demo exercises the real
@@ -149,8 +192,8 @@ def _ensure_project(db: Session, user: User, project_name: str) -> Project:
         result = recommend(
             db,
             RecommendationRequest(
-                task_types=_DEMO_TASK_TYPES,
-                budget_sensitivity=_DEMO_BUDGET_SENSITIVITY,
+                task_types=task_types or _DEMO_TASK_TYPES,
+                budget_sensitivity=budget_sensitivity or _DEMO_BUDGET_SENSITIVITY,
             ),
             user,
         )
@@ -169,7 +212,15 @@ def _ensure_project(db: Session, user: User, project_name: str) -> Project:
     return project
 
 
-def seed_runs(db: Session, project: Project, count: int) -> dict[str, object]:
+def seed_runs(
+    db: Session,
+    project: Project,
+    count: int,
+    *,
+    tokens: tuple[int, int, int, int] = _REVIEW_TOKENS,
+    findings: list[tuple[str, str, str, int, str]] | None = None,
+    task: str = "code_review",
+) -> dict[str, object]:
     """Reset + re-insert this project's CI runs (+ findings + the owner's verdicts).
     Idempotent: drops the project's existing runs first (FK cascade clears findings +
     feedback). Costs use the project's OWN selected-vs-baseline split prices, so
@@ -189,7 +240,8 @@ def seed_runs(db: Session, project: Project, count: int) -> dict[str, object]:
 
     now = datetime.now(timezone.utc)
     banked = risk = unrated = 0
-    for build, days_ago, tin, tout, n_find, n_acc, n_rej in make_runs(count):
+    finding_set = findings or _FINDINGS
+    for build, days_ago, tin, tout, n_find, n_acc, n_rej in make_runs(count, tokens):
         rated = n_acc + n_rej
         if rated == 0:
             quality_ok = None
@@ -206,7 +258,7 @@ def seed_runs(db: Session, project: Project, count: int) -> dict[str, object]:
             project_id=project.id,
             jenkins_build_id=str(build),
             model_id=selected.id,
-            task="code_review",
+            task=task,
             tokens_in=tin,
             tokens_out=tout,
             actual_cost=actual,
@@ -220,7 +272,7 @@ def seed_runs(db: Session, project: Project, count: int) -> dict[str, object]:
         db.flush()
 
         for i in range(n_find):
-            cat, sev, fpath, line, msg = _FINDINGS[i % len(_FINDINGS)]
+            cat, sev, fpath, line, msg = finding_set[i % len(finding_set)]
             finding = CiFinding(
                 ci_run_id=run.id, severity=sev, category=cat,
                 file=fpath, line=line, message=msg,
@@ -285,6 +337,72 @@ def seed_demo_data(
     return summary
 
 
+def seed_security_demo_data(
+    db: Session,
+    *,
+    email: str,
+    password: str,
+    project_name: str = "demo-sec",
+    run_count: int = 20,
+    force: bool = False,
+) -> dict[str, object]:
+    """Seed the SECURITY demo project (P38c) — the second of the product's two tasks.
+
+    Same shape and the same skip-if-present contract as `seed_demo_data`, but built
+    from a `security_analysis` recommendation (Gemini 3.5 Flash against the Claude
+    Opus 5 baseline, per RealVuln), with agentic-scan token volumes and CWE findings.
+    Kept as its own function rather than a branch inside `seed_demo_data` so the
+    original demo project's behaviour is provably untouched.
+    """
+    user = _ensure_user(db, email, password)
+    project = _ensure_project(
+        db,
+        user,
+        project_name,
+        task_types=_DEMO_SECURITY_TASK_TYPES,
+        budget_sensitivity=_DEMO_SECURITY_BUDGET_SENSITIVITY,
+    )
+
+    existing = db.scalar(
+        select(func.count()).select_from(CiRun).where(CiRun.project_id == project.id)
+    )
+    if existing and not force:
+        return {
+            "skipped": True,
+            "runs": existing,
+            "project": project.name,
+            "user": user.email,
+        }
+
+    summary = seed_runs(
+        db,
+        project,
+        run_count,
+        tokens=_SECURITY_TOKENS,
+        findings=_SECURITY_FINDINGS,
+        task="security_analysis",
+    )
+    summary["skipped"] = False
+    summary["project"] = project.name
+    summary["user"] = user.email
+    return summary
+
+
+def _print_summary(summary: dict[str, object]) -> None:
+    if summary.get("skipped"):
+        print(
+            f"demo dataset already present for {summary['project']!r} "
+            f"({summary['runs']} runs) — skipping (no re-seed on redeploy)."
+        )
+    else:
+        print(
+            f"Seeded {summary['runs']} runs for {summary['project']!r} "
+            f"(user {summary['user']}): {summary['banked']} banked · "
+            f"{summary['quality_risk']} quality-risk · {summary['unrated']} unrated · "
+            f"selected={summary['selected']} baseline={summary['baseline']}"
+        )
+
+
 def main() -> None:
     """CLI entrypoint (`python -m app.demo.seed`) — the demo half of the P30 auto-seed
     hook, gated by DEMO_SEED. Reads the demo user creds + run count from settings (the
@@ -303,24 +421,26 @@ def main() -> None:
 
     db = SessionLocal()
     try:
-        summary = seed_demo_data(
-            db,
-            email=s.demo_seed_email,
-            password=s.demo_seed_password,
-            project_name=s.demo_seed_project,
-            run_count=s.demo_seed_run_count,
-        )
-        if summary.get("skipped"):
-            print(
-                f"demo dataset already present for {summary['project']!r} "
-                f"({summary['runs']} runs) — skipping (no re-seed on redeploy)."
+        _print_summary(
+            seed_demo_data(
+                db,
+                email=s.demo_seed_email,
+                password=s.demo_seed_password,
+                project_name=s.demo_seed_project,
+                run_count=s.demo_seed_run_count,
             )
-        else:
-            print(
-                f"Seeded {summary['runs']} runs for {summary['project']!r} "
-                f"(user {summary['user']}): {summary['banked']} banked · "
-                f"{summary['quality_risk']} quality-risk · {summary['unrated']} unrated · "
-                f"selected={summary['selected']} baseline={summary['baseline']}"
+        )
+        # The security project (P38c) — same demo user, second task. Gated separately
+        # so an environment can seed only the review demo if it wants to.
+        if s.demo_seed_security_project:
+            _print_summary(
+                seed_security_demo_data(
+                    db,
+                    email=s.demo_seed_email,
+                    password=s.demo_seed_password,
+                    project_name=s.demo_seed_security_project,
+                    run_count=s.demo_seed_security_run_count,
+                )
             )
     finally:
         db.close()

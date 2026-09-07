@@ -27,7 +27,12 @@ def test_catalog_seed_entrypoint_seeds_rows(migrated_engine, monkeypatch, capsys
 
     catalog_seed.main()
 
-    assert "catalog rows seeded: 9" in capsys.readouterr().out
+    import json
+
+    from app.catalog.seed import SEED_PATH
+
+    expected = len(json.loads(SEED_PATH.read_text())["benchmark_results"])
+    assert f"catalog rows seeded: {expected}" in capsys.readouterr().out
 
 
 def test_demo_seed_is_idempotent_and_spends_no_tokens(db_session):
@@ -77,37 +82,56 @@ def test_demo_seed_is_idempotent_and_spends_no_tokens(db_session):
 
 
 def test_demo_seed_project_is_setup_complete(db_session):
-    """B2: the seeded project owns a Jenkins connection AND a minted CI token, so the
+    """B2: each seeded project owns a Jenkins connection AND a minted CI token, so the
     dashboard reads "setup complete" instead of badging the demo as half-configured.
     Re-seeding must not mint a second token (the connection upserts, the token is
-    mint-once) — the demo never ingests over the API, so the plaintext is discarded."""
+    mint-once) — the demo never ingests over the API, so the plaintext is discarded.
+
+    Asserted over BOTH demo projects, because the job name is derived per project: a
+    constant here would label every project with the first one's job, and demo-sec
+    would show "demo-api/main" on the dashboard and in the recording."""
+    from app.demo.seed import seed_security_demo_data
+
     load_seed(db_session)
     seed_demo_data(
         db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
     )
-
-    project = db_session.scalar(select(Project).where(Project.name == "demo-api"))
-    conn = db_session.scalar(
-        select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+    seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=5
     )
-    assert conn is not None
-    assert conn.base_url == "https://jenkins.example.invalid"
-    assert conn.job_name == "demo-api/main"
-    assert conn.status == "configured"
-    assert conn.ci_token_hash is not None  # minted; only the hash is stored
-    first_hash = conn.ci_token_hash
+
+    first_hashes = {}
+    for name in ("demo-api", "demo-sec"):
+        project = db_session.scalar(select(Project).where(Project.name == name))
+        conn = db_session.scalar(
+            select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+        )
+        assert conn is not None
+        assert conn.base_url == "https://jenkins.example.invalid"
+        assert conn.job_name == f"{name}/main"
+        assert conn.status == "configured"
+        assert conn.ci_token_hash is not None  # minted; only the hash is stored
+        first_hashes[name] = conn.ci_token_hash
 
     user = db_session.scalar(select(User).where(User.email == _EMAIL))
-    assert list_projects(db_session, user)[0].setup_complete is True
+    assert [p.setup_complete for p in list_projects(db_session, user)] == [True, True]
 
-    # a redeploy re-fires the hook: same connection, same token (no rotation)
+    # a redeploy re-fires the hook: same connections, same tokens (no rotation)
     seed_demo_data(
         db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
     )
-    db_session.refresh(conn)
-    assert conn.ci_token_hash == first_hash
+    seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=5
+    )
+    for name in ("demo-api", "demo-sec"):
+        project = db_session.scalar(select(Project).where(Project.name == name))
+        conn = db_session.scalar(
+            select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+        )
+        assert conn.ci_token_hash == first_hashes[name]
+        assert conn.job_name == f"{name}/main"
     assert (
-        db_session.scalar(select(func.count()).select_from(JenkinsConnection)) == 1
+        db_session.scalar(select(func.count()).select_from(JenkinsConnection)) == 2
     )
 
 
@@ -125,3 +149,101 @@ def test_demo_seed_main_skips_when_disabled(monkeypatch, capsys):
         assert "skipping" in capsys.readouterr().out.lower()
     finally:
         get_settings.cache_clear()
+
+
+def test_security_demo_project_is_seeded_from_a_real_recommendation(db_session):
+    """P38c: the second demo project, for the security-analysis task.
+
+    Built through the same `recommend` + `create_project` services as the review demo
+    — so the dashboard's security project is a real deterministic pick (Gemini 3.5
+    Flash against the Claude Opus 5 baseline on RealVuln), not a hand-stitched row."""
+    from app.demo.seed import seed_security_demo_data
+
+    load_seed(db_session)
+
+    summary = seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20
+    )
+
+    assert summary["skipped"] is False
+    assert summary["runs"] == 20
+    assert summary["selected"] == "Gemini 3.5 Flash"
+    assert summary["baseline"] == "Claude Opus 5"
+    # Every dashboard bucket is populated. The exact split falls out of the SHARED
+    # deterministic run generator (the same one the review demo uses) rather than
+    # being tuned per project: over 20 runs its cycles land on 17 banked, 1
+    # quality-risk and 2 unrated. Asserted exactly, because the value of a
+    # deterministic seed is that these numbers cannot drift unnoticed.
+    assert summary["banked"] == 17
+    assert summary["quality_risk"] == 1
+    assert summary["unrated"] == 2
+    assert summary["banked"] + summary["quality_risk"] + summary["unrated"] == 20
+
+    # re-running skips, exactly like the review demo (a PostSync hook re-fires on
+    # every deploy and must never wipe live demo activity)
+    again = seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20
+    )
+    assert again["skipped"] is True
+
+
+def test_the_two_demo_projects_coexist_under_one_user(db_session):
+    """Both demo projects belong to the same demo user, so one login shows both
+    tasks — and seeding one does not disturb the other's runs."""
+    from app.demo.seed import seed_demo_data, seed_security_demo_data
+
+    load_seed(db_session)
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+
+    assert db_session.scalar(select(func.count()).select_from(User)) == 1
+    projects = db_session.scalars(select(Project).order_by(Project.name)).all()
+    assert [p.name for p in projects] == ["demo-api", "demo-sec"]
+    assert db_session.scalar(select(func.count()).select_from(CiRun)) == 50
+
+    # zero tokens on both paths — the recommender is a pure scorer
+    assert db_session.scalar(select(func.count()).select_from(LlmCall)) == 0
+
+
+def test_security_runs_use_agentic_scan_token_volumes(db_session):
+    """A security scan reads a whole repository; a review reads one diff. If both
+    demos used the same token counts the dashboard's cost-per-run panel would be
+    telling a false story about what each task costs to operate."""
+    from app.demo.seed import seed_demo_data, seed_security_demo_data
+
+    load_seed(db_session)
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+
+    by_name = {p.name: p for p in db_session.scalars(select(Project)).all()}
+    review_runs = db_session.scalars(
+        select(CiRun).where(CiRun.project_id == by_name["demo-api"].id)
+    ).all()
+    security_runs = db_session.scalars(
+        select(CiRun).where(CiRun.project_id == by_name["demo-sec"].id)
+    ).all()
+
+    # roughly two orders of magnitude apart, matching RealVuln's published per-repo
+    # averages for an agentic scan (~134k input tokens)
+    assert max(r.tokens_in for r in review_runs) < 2_000
+    assert all(100_000 < r.tokens_in < 200_000 for r in security_runs)
+    assert all(r.task == "security_analysis" for r in security_runs)
+
+    # every security run still saves money against the Opus 5 baseline
+    assert all(r.savings > 0 for r in security_runs)
+
+
+def test_security_findings_carry_cwe_identifiers(db_session):
+    """Security findings speak CWE — the vocabulary the agent's Semgrep-shaped output
+    reports in, and what the findings table must be able to display."""
+    from app.demo.seed import seed_security_demo_data
+    from app.models import CiFinding
+
+    load_seed(db_session)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, run_count=20)
+
+    findings = db_session.scalars(select(CiFinding)).all()
+    assert findings
+    assert all(f.category == "security" for f in findings)
+    assert all("CWE-" in f.message for f in findings)
+    assert any(f.severity == "critical" for f in findings)

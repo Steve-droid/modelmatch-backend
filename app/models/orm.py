@@ -129,6 +129,11 @@ class Benchmark(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     task_type: Mapped[Optional[str]] = mapped_column(String(64))
+    # P38c: benchmarks move. `as_of` dates the figures our rows carry and `notes`
+    # records what changed since, so a snapshot is never shown as a live reading.
+    # The name stays the natural key, so a date never churns a join key.
+    as_of: Mapped[Optional[date]] = mapped_column(Date)
+    notes: Mapped[Optional[str]] = mapped_column(String(1024))
 
 
 class SourceDocument(Base):

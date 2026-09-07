@@ -8,11 +8,19 @@ never ranks; this transparent formula does. From architecture §3.1:
       cost    = cost_per_mtok / max_cost_in_group  # 0..1
       rank_score = w_q · quality + w_c · (1 − cost) # w_q + w_c = 1
 
-**Comparability rule (hard):** rows are only ever normalized against others in
-the same (benchmark, metric) group — never Pass@1 against accuracy. When the
-filtered rows span more than one group, we rank within the single *dominant*
-group (most rows) and report which group was used; cross-group rank_scores
-aren't comparable (different normalization bases), so we never merge them.
+**Comparability rule (hard, P38c):** rows are only ever normalized against others
+in the same (benchmark, metric) group — never Pass@1 against accuracy. Cross-group
+rank_scores aren't comparable (different normalization bases), so they are never
+merged.
+
+Until P38c, rows spanning several groups were resolved by a VOTE: the group with
+the most rows was ranked and the rest were silently discarded. That made the
+recommendation depend on how many rows each benchmark happened to contribute — add
+two rows to the losing benchmark and the winner changes for reasons that have
+nothing to do with quality or cost. Since P38c each task type owns exactly one
+(benchmark, metric) pair, enforced at write time by
+`catalog.service.upsert_catalog_row`. So more than one group surviving the filter
+means the data or the query is wrong, and we RAISE instead of silently choosing.
 """
 
 from __future__ import annotations
@@ -25,6 +33,24 @@ from decimal import Decimal
 _Q = Decimal("0.000001")
 _ZERO = Decimal(0)
 _ONE = Decimal(1)
+
+
+class MultipleComparabilityGroups(Exception):
+    """Raised when the rows handed to `score_and_rank` span >1 (benchmark, metric).
+
+    Not a user error and not recoverable by guessing: scores from different
+    benchmarks have different normalization bases, so any pick made across them
+    would be arbitrary. The caller surfaces it rather than ranking a subset.
+    """
+
+    def __init__(self, groups: list[tuple[str, str]]) -> None:
+        self.groups = groups
+        rendered = ", ".join(f"({b} · {m})" for b, m in groups)
+        super().__init__(
+            "Catalog rows span more than one comparability group: "
+            f"{rendered}. Exactly one (benchmark, metric) pair per task type is "
+            "required — scores from different benchmarks are not comparable."
+        )
 
 
 @dataclass(frozen=True)
@@ -74,14 +100,15 @@ def score_and_rank(items: list[ScoreInput], w_q: Decimal) -> RankResult:
     w_q = Decimal(w_q)
     w_c = _ONE - w_q
 
-    # Pick the dominant (benchmark, metric) group deterministically: most rows,
-    # ties → lexicographically smallest key.
-    counts: dict[tuple[str, str], int] = {}
-    for it in items:
-        counts[_group_key(it)] = counts.get(_group_key(it), 0) + 1
-    group = min(counts, key=lambda k: (-counts[k], k))
+    # Exactly ONE comparability group may survive the filter (P38c). Two groups is a
+    # data/query bug, not something to resolve by counting rows — see the module
+    # docstring. Sorted so the error message is deterministic.
+    groups = sorted({_group_key(it) for it in items})
+    if len(groups) > 1:
+        raise MultipleComparabilityGroups(groups)
+    group = groups[0]
 
-    rows = [it for it in items if _group_key(it) == group]
+    rows = list(items)
     max_score = max((r.score for r in rows), default=_ZERO)
     max_cost = max((r.cost for r in rows), default=_ZERO)
 
