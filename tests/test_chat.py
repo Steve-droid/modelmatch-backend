@@ -126,7 +126,11 @@ def test_answer_prompt_grounds_on_summary_and_rows():
     p = build_answer_prompt("q?", "MY-SPEND", "SELECT 1", ["n"], [(1,)])
     assert "MY-SPEND" in p.user and "SELECT 1" in p.user
     assert "only" in p.system.lower()  # ground only on provided data
-    assert p.prompt_id == "chat-answer@v1"
+    # B3: the answer must not present the period spend as savings
+    sys_low = p.system.lower()
+    assert "cumulative saved vs baseline" in sys_low
+    assert "never present spend as savings" in sys_low
+    assert p.prompt_id == "chat-answer@v2"
 
 
 def test_prompts_survive_untrusted_braces():

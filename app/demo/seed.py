@@ -28,6 +28,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.service import get_user_by_email, register_user
+from app.ci.service import ci_setup
 from app.config import get_settings
 from app.models import (
     CiFinding,
@@ -38,8 +39,10 @@ from app.models import (
     RecommendationOption,
     User,
 )
+from app.projects import jenkins_service
 from app.projects.service import create_project
 from app.recommend.service import recommend
+from app.schemas.jenkins import JenkinsConnectionUpdate
 from app.schemas.project import ProjectCreate
 from app.schemas.recommend import RecommendationRequest
 
@@ -48,6 +51,14 @@ from app.schemas.recommend import RecommendationRequest
 # the configured baseline (Sonnet). Deterministic — same catalog → same suggestion.
 _DEMO_TASK_TYPES = ["ci_review"]
 _DEMO_BUDGET_SENSITIVITY = "high"
+
+# The demo project's Jenkins connection. A placeholder host on the reserved .invalid
+# TLD — the demo never calls Jenkins (runs are seeded straight into the DB), it just
+# needs the connection + a minted CI token so the project reads "setup complete"
+# (app/projects/service.py: setup_complete = conn is not None and ci_token_hash is
+# not None) instead of badging "Setup incomplete" on the dashboard.
+_DEMO_JENKINS_BASE_URL = "https://jenkins.example.invalid"
+_DEMO_JENKINS_JOB = "demo-api/main"
 
 _THRESHOLD = Decimal("0.8")  # mirrors QUALITY_THRESHOLD (S13)
 _FINDINGS = [
@@ -103,37 +114,59 @@ def _ensure_user(db: Session, email: str, password: str) -> User:
     return register_user(db, email, password)
 
 
+def _ensure_jenkins_setup(db: Session, project: Project, user: User) -> None:
+    """Give the demo project a Jenkins connection + a minted CI token, through the
+    same services the API uses (`connect_jenkins`, then `ci_setup`). Without this the
+    dashboard badges the project "Setup incomplete", which reads as a broken demo.
+
+    Idempotent: `connect_jenkins` upserts the single per-project connection, and
+    `ci_setup` mints only when `ci_token_hash` is still NULL. The minted plaintext
+    token is DISCARDED here on purpose — the seed writes CI runs directly to the DB
+    and never ingests over the API, so nothing needs it (and nothing logs it)."""
+    jenkins_service.connect_jenkins(
+        db,
+        project.id,
+        JenkinsConnectionUpdate(
+            base_url=_DEMO_JENKINS_BASE_URL, job_name=_DEMO_JENKINS_JOB
+        ),
+        user,
+    )
+    ci_setup(db, project.id, user)  # mints the token on first run; the value is dropped
+
+
 def _ensure_project(db: Session, user: User, project_name: str) -> Project:
     """Get-or-create the demo project. On first run, generate a real recommendation
     (persists the options) and build the project from the suggested option + baseline
     via the same create_project service the API uses — so the demo exercises the real
-    code path, not a hand-stitched row."""
+    code path, not a hand-stitched row. Either way the project ends up with a Jenkins
+    connection + CI token (setup complete)."""
     project = db.scalar(
         select(Project).where(
             Project.name == project_name, Project.user_id == user.id
         )
     )
-    if project is not None:
-        return project
+    if project is None:
+        result = recommend(
+            db,
+            RecommendationRequest(
+                task_types=_DEMO_TASK_TYPES,
+                budget_sensitivity=_DEMO_BUDGET_SENSITIVITY,
+            ),
+            user,
+        )
+        out = create_project(
+            db,
+            ProjectCreate(
+                name=project_name,
+                selected_option_id=result.suggested.recommendation_option_id,
+                baseline_model_id=result.baseline.model_id,
+            ),
+            user,
+        )
+        project = db.get(Project, out.id)
 
-    result = recommend(
-        db,
-        RecommendationRequest(
-            task_types=_DEMO_TASK_TYPES,
-            budget_sensitivity=_DEMO_BUDGET_SENSITIVITY,
-        ),
-        user,
-    )
-    out = create_project(
-        db,
-        ProjectCreate(
-            name=project_name,
-            selected_option_id=result.suggested.recommendation_option_id,
-            baseline_model_id=result.baseline.model_id,
-        ),
-        user,
-    )
-    return db.get(Project, out.id)
+    _ensure_jenkins_setup(db, project, user)
+    return project
 
 
 def seed_runs(db: Session, project: Project, count: int) -> dict[str, object]:

@@ -11,7 +11,7 @@ Two prompts:
   `CANNOT_ANSWER` (off-topic). The three-way decision is what makes the hybrid work:
   savings questions need no catalog lookup, catalog questions do, off-topic gets
   refused with no answer-gen call.
-- `chat-answer@v1` — LLM #2: question + spend summary + retrieved catalog rows → an
+- `chat-answer@v2` — LLM #2: question + spend summary + retrieved catalog rows → an
   answer grounded ONLY in those, or an honest "I don't have that."
 
 Product framing baked into both: ModelMatch proves a cheaper LLM is good enough to run
@@ -146,7 +146,9 @@ def build_retry_context(failed_sql: str, error: str) -> str:
 
 ANSWER_GEN = PromptTemplate(
     name="chat-answer",
-    version="v1",
+    # v2 (P38 B3): added the saved-vs-spend nudge below — the live opener had been
+    # presenting the period spend as if it were the savings.
+    version="v2",
     system=(
         "You are the ModelMatch assistant. ModelMatch proves a cheaper LLM is good "
         "enough to run as a CI code-review agent (it flags security risks and "
@@ -155,7 +157,11 @@ ANSWER_GEN = PromptTemplate(
         "the catalog query results provided below — never invent models, numbers, "
         "vendors, or fields not present. If the data provided does not contain the "
         "answer, say so plainly. If there are no catalog rows, say there were no "
-        "matching results. Be concise and factual."
+        "matching results. Be concise and factual. "
+        "'saved' always refers to the Cumulative saved vs baseline figure; 'spend' is "
+        "the actual amount paid; never present spend as savings. "
+        "Write in plain punctuation: use commas, colons or separate sentences, never "
+        "em dashes."
     ),
     user_template=(
         "Question: <<QUESTION>>\n\n"
