@@ -121,7 +121,7 @@ def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
     from app.catalog.seed import SEED_PATH
 
     expected = json.loads(SEED_PATH.read_text())["agent_runtime_configs"]
-    assert len(rows) == len(expected) == 8
+    assert len(rows) == len(expected) == 9
 
     by_model = {row.model.name: row for row in rows}
     haiku = by_model["Claude Haiku 4.5"]

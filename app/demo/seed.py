@@ -68,7 +68,7 @@ _DEMO_JENKINS_JOB_SUFFIX = "main"
 # P38c: a SECOND demo project for the security-analysis task, so the dashboard shows
 # the product's two tasks side by side — a cheap reviewer on every PR, and an agentic
 # vulnerability scan whose findings gate the build. Cost-leaning on RealVuln picks
-# Gemini 3.5 Flash against the Claude Opus 5 baseline.
+# DeepSeek V4 Flash against the Claude Opus 5 baseline.
 _DEMO_SECURITY_TASK_TYPES = ["security_analysis"]
 _DEMO_SECURITY_BUDGET_SENSITIVITY = "high"
 
@@ -76,7 +76,9 @@ _DEMO_SECURITY_BUDGET_SENSITIVITY = "high"
 # would look wrong if they did not. A review reads ONE diff and answers in a few
 # hundred tokens. A security scan is an agentic loop that reads a whole repository:
 # RealVuln's own Gemini 3.5 Flash run averaged 133,767 input and 4,170 output tokens
-# per repository, which is the scale used here.
+# per repository, which is the scale used here. That figure describes the WORKLOAD, not
+# the model — the same repository is the same code to read whichever model scans it — so
+# it stays the anchor now that the pick is DeepSeek V4 Flash.
 _REVIEW_TOKENS = (1_100, 650, 290, 200)  # (in_base, in_spread, out_base, out_spread)
 _SECURITY_TOKENS = (120_000, 30_000, 3_600, 1_200)
 
@@ -349,7 +351,7 @@ def seed_security_demo_data(
     """Seed the SECURITY demo project (P38c) — the second of the product's two tasks.
 
     Same shape and the same skip-if-present contract as `seed_demo_data`, but built
-    from a `security_analysis` recommendation (Gemini 3.5 Flash against the Claude
+    from a `security_analysis` recommendation (DeepSeek V4 Flash against the Claude
     Opus 5 baseline, per RealVuln), with agentic-scan token volumes and CWE findings.
     Kept as its own function rather than a branch inside `seed_demo_data` so the
     original demo project's behaviour is provably untouched.

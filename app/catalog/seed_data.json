@@ -505,6 +505,15 @@
    "auth_mode": "api_key",
    "credential_env_var": "GOOGLE_API_KEY",
    "enabled": true
+  },
+  {
+   "model": "DeepSeek V4 Flash",
+   "vendor": "DeepSeek",
+   "provider": "deepseek",
+   "provider_model_id": "deepseek-v4-flash",
+   "auth_mode": "api_key",
+   "credential_env_var": "DEEPSEEK_API_KEY",
+   "enabled": true
   }
  ]
 }

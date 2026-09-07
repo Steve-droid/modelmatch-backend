@@ -250,13 +250,16 @@ def test_recommendation_requires_auth(client):
 def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
     """P38c: the recommendation must be deployable.
 
-    RealVuln scores 16 scanners, but we hold accounts for only two of them. Ranking
+    RealVuln scores 16 scanners; the agent is known to drive three of them. Ranking
     the rest would hand the user a confident pick their pipeline cannot run — so the
     pick ranks only models with an enabled agent_runtime_config, and the response
     reports both counts so the narrowing is visible rather than silent. The excluded
-    rows stay in the catalog and the chat. The bar is a credential, not a capability:
-    the security runtime (OpenCode) already speaks most of these providers, so the
-    ranked set widens by adding a key."""
+    rows stay in the catalog and the chat. That row is a claim about what we SUPPORT,
+    not about credentials we hold: the table has no user_id and credential_env_var
+    stores an env var NAME, so the key is always the user's. The security runtime
+    (OpenCode) already speaks most of these providers, so the ranked set widens with a
+    verification run, not adapter code — which is how DeepSeek V4 Flash joined it at
+    P38g."""
     load_seed(db_session)
     headers = _auth_header(client)
 
@@ -268,11 +271,14 @@ def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
 
     group = body["comparabilityGroup"]
     assert group["candidateCount"] == 16  # everything RealVuln scored
-    assert group["rankedCount"] == 2  # what we can actually run: Gemini 3.5 Flash, Opus 5
+    # what the agent can drive: DeepSeek V4 Flash, Gemini 3.5 Flash, Opus 5
+    assert group["rankedCount"] == 3
     assert group["rankedCount"] < group["candidateCount"]
 
-    # the cost-leaning security pick is the runnable one, not the unrunnable cheapest
-    assert body["suggested"]["model"] == "Gemini 3.5 Flash"
+    # the cost-leaning security pick comes from the runnable set. Since P38g that is
+    # also the cheapest scored row outright — before it, the cheapest was excluded and
+    # the pick was the cheapest RUNNABLE one, which is the case this filter exists for.
+    assert body["suggested"]["model"] == "DeepSeek V4 Flash"
     assert body["baseline"]["model"] == "Claude Opus 5"
 
     # and the full 16 rows are still in the catalog — the narrowing is the PICK's,

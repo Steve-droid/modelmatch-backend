@@ -155,7 +155,7 @@ def test_security_demo_project_is_seeded_from_a_real_recommendation(db_session):
     """P38c: the second demo project, for the security-analysis task.
 
     Built through the same `recommend` + `create_project` services as the review demo
-    — so the dashboard's security project is a real deterministic pick (Gemini 3.5
+    — so the dashboard's security project is a real deterministic pick (DeepSeek V4
     Flash against the Claude Opus 5 baseline on RealVuln), not a hand-stitched row."""
     from app.demo.seed import seed_security_demo_data
 
@@ -167,7 +167,7 @@ def test_security_demo_project_is_seeded_from_a_real_recommendation(db_session):
 
     assert summary["skipped"] is False
     assert summary["runs"] == 20
-    assert summary["selected"] == "Gemini 3.5 Flash"
+    assert summary["selected"] == "DeepSeek V4 Flash"
     assert summary["baseline"] == "Claude Opus 5"
     # Every dashboard bucket is populated. The exact split falls out of the SHARED
     # deterministic run generator (the same one the review demo uses) rather than

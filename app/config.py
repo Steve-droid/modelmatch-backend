@@ -93,10 +93,11 @@ class Settings(BaseSettings):
     # We support a model once we have verified the agent can drive it. For the security
     # task that bar is low, since the runtime is the OpenCode CLI, which already speaks
     # DeepSeek, Moonshot, Z.AI and Together — a row plus a verification run, no adapter
-    # code. Verifying needs a working key, and today the only keys to hand are ours,
-    # which is why the supported set currently tracks our own accounts rather than
-    # anything intrinsic. Genuinely out of reach: local open-weight builds (our own GPU
-    # hardware) and models scored under a harness we do not run.
+    # code (exactly how DeepSeek V4 Flash was added at P38g). Verifying needs a working
+    # key, and today the only keys to hand are ours, which is why the supported set
+    # currently tracks our own accounts rather than anything intrinsic. Genuinely out of
+    # reach: local open-weight builds (our own GPU hardware) and models scored under a
+    # harness we do not run.
     #
     # This narrows the PICK only. The full catalog is still stored, still returned by
     # GET /benchmarks, and still queryable by the grounded chat — so the breadth of
