@@ -82,37 +82,56 @@ def test_demo_seed_is_idempotent_and_spends_no_tokens(db_session):
 
 
 def test_demo_seed_project_is_setup_complete(db_session):
-    """B2: the seeded project owns a Jenkins connection AND a minted CI token, so the
+    """B2: each seeded project owns a Jenkins connection AND a minted CI token, so the
     dashboard reads "setup complete" instead of badging the demo as half-configured.
     Re-seeding must not mint a second token (the connection upserts, the token is
-    mint-once) — the demo never ingests over the API, so the plaintext is discarded."""
+    mint-once) — the demo never ingests over the API, so the plaintext is discarded.
+
+    Asserted over BOTH demo projects, because the job name is derived per project: a
+    constant here would label every project with the first one's job, and demo-sec
+    would show "demo-api/main" on the dashboard and in the recording."""
+    from app.demo.seed import seed_security_demo_data
+
     load_seed(db_session)
     seed_demo_data(
         db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
     )
-
-    project = db_session.scalar(select(Project).where(Project.name == "demo-api"))
-    conn = db_session.scalar(
-        select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+    seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=5
     )
-    assert conn is not None
-    assert conn.base_url == "https://jenkins.example.invalid"
-    assert conn.job_name == "demo-api/main"
-    assert conn.status == "configured"
-    assert conn.ci_token_hash is not None  # minted; only the hash is stored
-    first_hash = conn.ci_token_hash
+
+    first_hashes = {}
+    for name in ("demo-api", "demo-sec"):
+        project = db_session.scalar(select(Project).where(Project.name == name))
+        conn = db_session.scalar(
+            select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+        )
+        assert conn is not None
+        assert conn.base_url == "https://jenkins.example.invalid"
+        assert conn.job_name == f"{name}/main"
+        assert conn.status == "configured"
+        assert conn.ci_token_hash is not None  # minted; only the hash is stored
+        first_hashes[name] = conn.ci_token_hash
 
     user = db_session.scalar(select(User).where(User.email == _EMAIL))
-    assert list_projects(db_session, user)[0].setup_complete is True
+    assert [p.setup_complete for p in list_projects(db_session, user)] == [True, True]
 
-    # a redeploy re-fires the hook: same connection, same token (no rotation)
+    # a redeploy re-fires the hook: same connections, same tokens (no rotation)
     seed_demo_data(
         db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
     )
-    db_session.refresh(conn)
-    assert conn.ci_token_hash == first_hash
+    seed_security_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=5
+    )
+    for name in ("demo-api", "demo-sec"):
+        project = db_session.scalar(select(Project).where(Project.name == name))
+        conn = db_session.scalar(
+            select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+        )
+        assert conn.ci_token_hash == first_hashes[name]
+        assert conn.job_name == f"{name}/main"
     assert (
-        db_session.scalar(select(func.count()).select_from(JenkinsConnection)) == 1
+        db_session.scalar(select(func.count()).select_from(JenkinsConnection)) == 2
     )
 
 

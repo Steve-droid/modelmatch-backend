@@ -52,13 +52,18 @@ from app.schemas.recommend import RecommendationRequest
 _DEMO_TASK_TYPES = ["ci_review"]
 _DEMO_BUDGET_SENSITIVITY = "high"
 
-# The demo project's Jenkins connection. A placeholder host on the reserved .invalid
+# The demo projects' Jenkins connection. A placeholder host on the reserved .invalid
 # TLD — the demo never calls Jenkins (runs are seeded straight into the DB), it just
 # needs the connection + a minted CI token so the project reads "setup complete"
 # (app/projects/service.py: setup_complete = conn is not None and ci_token_hash is
 # not None) instead of badging "Setup incomplete" on the dashboard.
+#
+# The job name is DERIVED from the project name rather than being a constant: every
+# demo project gets its own `<project>/main` label. A literal here would badge every
+# project with the first one's job — demo-sec would read "demo-api/main" on the
+# dashboard and in the recording.
 _DEMO_JENKINS_BASE_URL = "https://jenkins.example.invalid"
-_DEMO_JENKINS_JOB = "demo-api/main"
+_DEMO_JENKINS_JOB_SUFFIX = "main"
 
 # P38c: a SECOND demo project for the security-analysis task, so the dashboard shows
 # the product's two tasks side by side — a cheap reviewer on every PR, and an agentic
@@ -157,7 +162,8 @@ def _ensure_jenkins_setup(db: Session, project: Project, user: User) -> None:
         db,
         project.id,
         JenkinsConnectionUpdate(
-            base_url=_DEMO_JENKINS_BASE_URL, job_name=_DEMO_JENKINS_JOB
+            base_url=_DEMO_JENKINS_BASE_URL,
+            job_name=f"{project.name}/{_DEMO_JENKINS_JOB_SUFFIX}",
         ),
         user,
     )
