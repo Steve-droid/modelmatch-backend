@@ -29,7 +29,9 @@ Key features:
 
 - **Deterministic recommender (NO LLM)** — form inputs → filter the benchmark catalog → weighted score
   (`rank_score = w_q·quality + w_c·(1 − cost)`) → suggested model + a baseline + shortlist. A pure
-  function: same inputs → same output, `rank_score` stored for audit.
+  function: same inputs → same output, `rank_score` stored for audit. **One benchmark and one metric
+  per task type** is a hard invariant (see [The catalog](#the-catalog)), and the pick is restricted to
+  models the CI agent can actually run.
 - **Catalog ingestion (#3, LLM)** — unstructured model/benchmark sources → **Bedrock Nova** extract →
   **validated** structured rows → upsert. **Idempotent** (content-hash → skip unchanged); sources to S3.
   The LLM *fills* the catalog; the formula still *ranks*.
@@ -162,7 +164,9 @@ Config is read from env via `pydantic-settings` (no hardcoded secrets/URLs). The
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg://…@localhost:5432/modelmatch` | Postgres connection |
 | `JWT_SECRET` | `change-me-in-env` | JWT signing secret (set a real value — placeholder is rejected) |
-| `BASELINE_MODEL_ID` | `Claude Sonnet 4.5` | demo baseline (computed, not run) |
+| `BASELINE_MODEL_ID` | `Claude Sonnet 4.5` | fallback baseline for a task with no entry below |
+| `BASELINE_MODEL_IDS` | `{"ci_review":…,"security_analysis":…}` | per-task baselines (computed, not run) |
+| `RECOMMEND_ONLY_RUNNABLE` | `true` | rank only models with an enabled `agent_runtime_config` |
 | `QUALITY_THRESHOLD` | `0.8` | acceptance-rate gate for banking savings |
 | `LLM_CLIENT` | `fake` | **in-cluster** LLM surface: `fake` \| `bedrock` (Nova via IRSA) |
 | `BEDROCK_MODEL_ID` | `apac.amazon.nova-lite-v1:0` | in-cluster Nova (ap-south-1 needs the `apac.` inference profile) |
@@ -179,6 +183,60 @@ Config is read from env via `pydantic-settings` (no hardcoded secrets/URLs). The
 > per-request `llm_call` log line records model/latency/tokens/retrieved-context size but **never the diff
 > content or secrets**. See the [runbook §9](docs/runbook.md#9-environment-variables) for the complete
 > table.
+
+## The catalog
+
+The recommender ranks over a catalog of benchmark results. Two rules govern it, both
+enforced in code rather than by convention:
+
+**One benchmark and one metric per task type.** Rows are only comparable when they share
+a benchmark *and* a metric — a review score and a pass@1 share no scale. Earlier this was
+resolved at rank time by a vote (the group with the most rows won), which meant row
+*counts* could decide a recommendation. It is now a hard invariant: `upsert_catalog_row`
+rejects a row that would give a task type a second (benchmark, metric) pair, and
+`score_and_rank` raises rather than choosing between two groups.
+
+| Task type | Benchmark | Metric | Baseline |
+|---|---|---|---|
+| `ci_review` | CodeReviewBench (**June 2026 snapshot**) | `review_score_percent` | Claude Sonnet 4.5 |
+| `security_analysis` | RealVuln v2.1 | `f3_score` | Claude Opus 5 |
+| `agentic_coding` | SWE-bench Verified | `pass@1_percent` | — (data only, never recommended over) |
+
+**Every score cites a dated source.** `benchmark.as_of` and `benchmark.notes` record when a
+benchmark's figures were taken and what has changed since, so a snapshot is never displayed
+as a live reading — CodeReviewBench has since moved to a different metric, and our rows say
+so. The seed contains no uncited or illustrative figures, and a test enforces that.
+
+The security rows are generated, not typed:
+
+```bash
+uv run python -m app.catalog.ingest_realvuln --dry-run      # show what would be imported
+uv run python -m app.catalog.ingest_realvuln --write-seed   # regenerate the seed's rows
+uv run python -m app.catalog.ingest_realvuln                # upsert into the database
+```
+
+It reads RealVuln's own `reports/dashboard.json` (scores) and `llm-bench/config/models.yaml`
+(prices), joined on the benchmark's `scanner_slug`, from the checked-in copies under
+[`data/catalog/`](data/catalog). **No LLM is involved** — the data is already structured, so
+an extraction step could only add cost and the risk of an invented number. It is idempotent
+by content hash, and it skips rather than guesses: a scanner with no published price is
+reported as skipped, never priced by assumption.
+
+**The pick is restricted to runnable models.** A benchmark scores many models the agent has
+no verified path to — RealVuln measures DeepSeek, Moonshot, Z.AI and local open-weight
+builds. Recommending one would hand the user a model their pipeline cannot run, so ranking
+considers only models with an enabled `agent_runtime_config`, and the response reports
+`rankedCount` against `candidateCount` so the narrowing is visible. Excluded rows stay in the
+catalog and answerable by the chat. Set `RECOMMEND_ONLY_RUNNABLE=false` to rank everything.
+
+To be precise about that bar: an `agent_runtime_config` row is a claim about what we
+**support**, not about credentials we hold. The table has no `user_id`, and
+`credential_env_var` stores an env var *name* — the key is always the user's, supplied in
+their own pipeline. We list a model once we have verified the agent can drive it. For the
+security task that is cheap, since the runtime is the OpenCode CLI, which already speaks
+DeepSeek, Moonshot, Z.AI and Together: a row plus a verification run, no adapter code. Only
+local open-weight builds (own GPU hardware) and models scored under a harness we do not run
+are genuinely out of reach.
 
 ## Tests
 

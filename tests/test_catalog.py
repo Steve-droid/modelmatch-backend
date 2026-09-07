@@ -88,9 +88,20 @@ def test_seed_loads_idempotently(db_session):
     count_after_second = db_session.scalar(select(func.count()).select_from(BenchmarkResult))
     assert count_after_second == count_after_first  # no duplicates
 
-    # models deduped across rows (Claude Haiku 4.5 appears twice: ci_review + agentic_coding)
+    # Models are deduped across rows rather than created per row — Claude Haiku 4.5
+    # appears in two groups, Claude Opus 5 and the Gemini/Kimi/GLM families across the
+    # RealVuln import. Derived from the seed file so the assertion cannot rot into a
+    # stale magic number when the catalog is refreshed.
+    import json
+
+    from app.catalog.seed import SEED_PATH
+
+    seed = json.loads(SEED_PATH.read_text())
+    expected_models = {
+        (r["model"], r["vendor"]) for r in seed["benchmark_results"]
+    }
     model_count = db_session.scalar(select(func.count()).select_from(Model))
-    assert model_count == 7
+    assert model_count == len(expected_models)
 
 
 def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
@@ -100,7 +111,17 @@ def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
     rows = db_session.scalars(
         select(AgentRuntimeConfig).join(Model).order_by(Model.vendor, Model.name)
     ).all()
-    assert len(rows) == 3
+    # Every model the CI agent can actually execute on Steve's keys: the Anthropic
+    # line (Haiku, Sonnet 4.5, Opus 5), the Google line (2.5 Flash, 2.5 Pro, 3.1 Pro,
+    # 3.5 Flash) and Nova 2 Lite via Bedrock. Since P38c this set is also what the
+    # recommender is allowed to PICK from, so a missing row silently shrinks the
+    # shortlist — hence the exact count.
+    import json
+
+    from app.catalog.seed import SEED_PATH
+
+    expected = json.loads(SEED_PATH.read_text())["agent_runtime_configs"]
+    assert len(rows) == len(expected) == 8
 
     by_model = {row.model.name: row for row in rows}
     haiku = by_model["Claude Haiku 4.5"]
@@ -123,6 +144,17 @@ def test_seed_loads_demo_agent_runtime_configs_idempotently(db_session):
     assert gemini.auth_mode == "api_key"
     assert gemini.credential_env_var == "GOOGLE_API_KEY"
     assert gemini.enabled is True
+
+    # P38c: the runnable security pick. The id is stored BARE and the credential under
+    # the name the user sets in Jenkins — the agent's OpenCode entrypoint composes
+    # `google/<id>` and re-exports the provider-specific env var, so one row serves
+    # both the review runtime (our own adapter) and the security runtime (OpenCode).
+    gemini_35 = by_model["Gemini 3.5 Flash"]
+    assert gemini_35.provider == "gemini"
+    assert gemini_35.provider_model_id == "gemini-3.5-flash"
+    assert gemini_35.auth_mode == "api_key"
+    assert gemini_35.credential_env_var == "GOOGLE_API_KEY"
+    assert gemini_35.enabled is True
 
 
 def test_null_harness_dedupes_via_nulls_not_distinct(db_session):

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, get_db
 from app.catalog import service
+from app.catalog.service import TaskBenchmarkConflict
 from app.ingest.service import build_ingest_client, ingest_source
 from app.llm import LLMClient
 from app.llm_budget import HourlyTokenCapExceeded
@@ -36,7 +37,14 @@ def add_benchmark(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> CatalogRowOut:
-    return service.upsert_catalog_row(db, payload)
+    try:
+        return service.upsert_catalog_row(db, payload)
+    except TaskBenchmarkConflict as exc:
+        # The one-(benchmark, metric)-per-task-type invariant (P38c). 422: the row is
+        # well-formed but not storable against the catalog's current task model.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/ingest", response_model=IngestResult, status_code=status.HTTP_200_OK)

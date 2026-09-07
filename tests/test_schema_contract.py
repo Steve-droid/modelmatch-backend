@@ -25,7 +25,7 @@ CONTRACT = {
         "outputPricePerMtok", "dataPolicy",
     },
     "HarnessOut": {"id", "name", "vendor"},
-    "BenchmarkOut": {"id", "name", "taskType"},
+    "BenchmarkOut": {"id", "name", "taskType", "asOf", "notes"},
     "BenchmarkResultCreate": {
         "modelId", "benchmarkId", "harnessId", "taskType", "score", "metric",
         "costPerMtok", "contextWindow", "source", "sourceDocumentId", "measuredAt",
@@ -38,11 +38,13 @@ CONTRACT = {
         "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
         "inputPricePerMtok", "outputPricePerMtok", "harness",
         "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
+        "benchmarkAsOf", "benchmarkNotes",
     },
     "CatalogRowOut": {
         "id", "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
         "inputPricePerMtok", "outputPricePerMtok",
         "harness", "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
+        "benchmarkAsOf", "benchmarkNotes",
     },
 }
 

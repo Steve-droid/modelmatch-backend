@@ -18,8 +18,9 @@ Two design choices, mirroring the ABC SQL-RAG chat:
 
 from __future__ import annotations
 
-# Kept in sync with the `chat_catalog` view in
-# migrations/.../a1b2c3d4e5f6_chat_readonly_role_and_view.py
+# Kept in sync with the `chat_catalog` view — created in
+# migrations/.../a1b2c3d4e5f6_chat_readonly_role_and_view.py and extended with the
+# benchmark-provenance columns in .../a7b8c9d0e1f2_benchmark_as_of_and_notes.py
 CATALOG_VIEW = "chat_catalog"
 
 _COLUMNS: list[tuple[str, str]] = [
@@ -29,7 +30,12 @@ _COLUMNS: list[tuple[str, str]] = [
     ("benchmark", "text — the benchmark name, e.g. 'CodeReviewBench', 'SWE-bench Verified'"),
     ("harness", "text — the eval harness/scaffold, or NULL if none"),
     ("harness_vendor", "text — the harness vendor, or NULL"),
-    ("task_type", "text — e.g. 'ci_review', 'agentic_coding'"),
+    (
+        "task_type",
+        "text — the task the score measures: 'ci_review' (PR code review), "
+        "'security_analysis' (agentic vulnerability scanning), or 'agentic_coding'. "
+        "Each task type is measured by exactly ONE benchmark and metric.",
+    ),
     ("metric", "text — the score's metric, e.g. 'pass@1', 'accuracy'"),
     ("score", "numeric — the benchmark score (higher is better; scale depends on metric)"),
     (
@@ -42,6 +48,15 @@ _COLUMNS: list[tuple[str, str]] = [
     ("context_window", "integer — max context tokens, or NULL"),
     ("source", "text — where the figure came from (provenance), or NULL"),
     ("measured_at", "date — when the figure was measured, or NULL"),
+    (
+        "benchmark_as_of",
+        "date — the date THIS BENCHMARK's figures were taken, or NULL if the "
+        "benchmark is continuously refreshed. Use it to answer how current a score is.",
+    ),
+    (
+        "benchmark_notes",
+        "text — what the benchmark measures and any caveat about its age, or NULL",
+    ),
 ]
 
 _RULES = """\
@@ -55,6 +70,15 @@ Rules and conventions:
   cost rankings rather than treating NULL as 0.
 - Cheapest / most expensive → ORDER BY cost_per_mtok (skip NULLs). Best quality on a
   benchmark → ORDER BY score DESC within one (benchmark, metric) pair.
+- Scores are point-in-time readings, not live leaderboard values. When a row has a
+  'benchmark_as_of' date, any claim about that score is only true as of that date —
+  select it (and 'benchmark_notes') whenever the question is about how good, how
+  current, or how trustworthy a score is.
+- A score is an AVERAGE over the benchmark's whole suite (RealVuln averages 66
+  repositories; CodeReviewBench a set of pull requests). It describes typical
+  performance across that suite and does NOT predict what a model will find on any
+  one repository or pull request — a single run can score well above or below it.
+  Never present a benchmark score as an expected result for a specific CI run.
 - This view has NO per-user, per-project, spend, savings, or CI-run data. Questions
   about the user's OWN spend, savings, cost so far, or review quality are answered
   from the separate spend summary, NOT from this view — for those, output NO_QUERY.

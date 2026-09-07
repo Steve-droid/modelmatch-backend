@@ -24,7 +24,11 @@ venv/
 
 # Local demo/reference data copied from tracked fixtures/seeds.
 # Not part of the application image or source-controlled artifact set.
-data/
+data/*
+# Exception (P38c): data/catalog/ holds the PINNED upstream benchmark sources the
+# deterministic RealVuln ingest reads and its tests load at import time, so they ARE
+# source. Not shipped in the image — the container seeds from app/catalog/seed_data.json.
+!data/catalog/
 
 # OS / editor
 .DS_Store

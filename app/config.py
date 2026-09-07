@@ -65,8 +65,45 @@ class Settings(BaseSettings):
     # within the ranked comparability group), not a DB id — ids differ per fresh
     # DB. Falls back to the highest-cost model in the group if absent. Demo = Sonnet.
     baseline_model_id: str = "Claude Sonnet 4.5"
+    # P38c: each task type is measured by its own benchmark, so each gets its own
+    # "expensive default". A JSON object mapping task_type → model NAME, e.g.
+    #   BASELINE_MODEL_IDS='{"ci_review":"Claude Sonnet 4.5","security_analysis":"Claude Opus 5"}'
+    # `baseline_model_id` above stays the fallback for any task not listed (and for
+    # a deploy whose env predates this setting), so behaviour never silently changes.
+    baseline_model_ids: dict[str, str] = Field(
+        default_factory=lambda: {
+            "ci_review": "Claude Sonnet 4.5",
+            "security_analysis": "Claude Opus 5",
+        }
+    )
     # ≥ 1 so suggested = shortlist[0] can never index an empty list.
     recommendation_shortlist_size: int = Field(default=3, ge=1)
+    # P38c. ModelMatch recommends a model to RUN in the user's CI, so by default the
+    # pick ranks only models the agent can actually reach: one with an enabled
+    # agent_runtime_config, meaning a credential the generated pipeline can inject and
+    # a runtime that can address the model. Recommending a model the pipeline cannot
+    # run is a broken recommendation, however good its benchmark score.
+    #
+    # Note what this row asserts, because it is easy to overstate in both directions.
+    # This table has no user_id and `credential_env_var` holds an env var NAME, not a
+    # secret — the key is always the user's. So an enabled row means "the agent can
+    # drive this model, and here is the variable its key arrives in": a claim about
+    # what we SUPPORT, never about what we possess.
+    #
+    # We support a model once we have verified the agent can drive it. For the security
+    # task that bar is low, since the runtime is the OpenCode CLI, which already speaks
+    # DeepSeek, Moonshot, Z.AI and Together — a row plus a verification run, no adapter
+    # code. Verifying needs a working key, and today the only keys to hand are ours,
+    # which is why the supported set currently tracks our own accounts rather than
+    # anything intrinsic. Genuinely out of reach: local open-weight builds (our own GPU
+    # hardware) and models scored under a harness we do not run.
+    #
+    # This narrows the PICK only. The full catalog is still stored, still returned by
+    # GET /benchmarks, and still queryable by the grounded chat — so the breadth of
+    # the benchmark (e.g. every scanner RealVuln measured) stays visible and honest;
+    # what changes is that the wizard will not hand you a model you cannot deploy.
+    # Set false to rank the entire catalog instead.
+    recommend_only_runnable: bool = True
 
     # Quality gate (S13, OQ1). A CI run's findings get accept/reject feedback; the
     # per-run acceptance rate (accepted / rated) must be ≥ this threshold for the run
@@ -146,6 +183,10 @@ class Settings(BaseSettings):
     demo_seed_password: str | None = None
     demo_seed_project: str = "demo-api"
     demo_seed_run_count: int = Field(default=30, ge=1)
+    # P38c: the second demo project, for the security-analysis task. Set to an empty
+    # string to seed only the review demo.
+    demo_seed_security_project: str = "demo-sec"
+    demo_seed_security_run_count: int = Field(default=20, ge=1)
 
     @model_validator(mode="after")
     def _require_demo_creds_when_seeding(self) -> "Settings":
@@ -156,6 +197,12 @@ class Settings(BaseSettings):
                 "DEMO_SEED is on but DEMO_SEED_EMAIL / DEMO_SEED_PASSWORD are unset."
             )
         return self
+
+    def baseline_for(self, task_type: str | None) -> str:
+        """The baseline model NAME for a task type, falling back to the global one."""
+        if task_type and task_type in self.baseline_model_ids:
+            return self.baseline_model_ids[task_type]
+        return self.baseline_model_id
 
     @property
     def chat_database_url(self) -> str:

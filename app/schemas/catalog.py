@@ -45,6 +45,8 @@ class BenchmarkOut(CamelModel):
     id: int
     name: str
     task_type: Optional[str] = None
+    as_of: Optional[date] = None
+    notes: Optional[str] = None
 
 
 class BenchmarkResultCreate(CamelModel):
@@ -89,6 +91,12 @@ class CatalogRowIn(CamelModel):
     context_window: Optional[int] = None
     source: Optional[str] = None
     measured_at: Optional[date] = None
+    # Benchmark-level provenance (P38c). Set on the BENCHMARK, not the row, but
+    # accepted/returned per row because the catalog's wire shape is denormalized:
+    # `as_of` dates the whole benchmark's figures, `notes` says what changed since.
+    # Any upsert path (seed, ingest, POST /benchmarks) can therefore date its source.
+    benchmark_as_of: Optional[date] = None
+    benchmark_notes: Optional[str] = None
 
 
 class CatalogRowOut(CatalogRowIn):

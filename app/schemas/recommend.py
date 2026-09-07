@@ -32,6 +32,12 @@ class ComparabilityGroup(CamelModel):
 
     benchmark: str
     metric: str
+    # P38c transparency: how many catalog rows this task has, and how many were
+    # ranked. They differ when rows were excluded as not runnable by the CI agent
+    # (RECOMMEND_ONLY_RUNNABLE), so the UI can say "ranked 2 of 16 models your agent
+    # can run" instead of silently presenting a shortened list.
+    ranked_count: Optional[int] = None
+    candidate_count: Optional[int] = None
 
 
 class RecommendationOptionOut(CamelModel):
