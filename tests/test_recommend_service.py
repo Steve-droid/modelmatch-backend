@@ -250,7 +250,7 @@ def test_recommendation_requires_auth(client):
 def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
     """P38c: the recommendation must be deployable.
 
-    RealVuln scores 16 scanners; the agent is known to drive three of them. Ranking
+    RealVuln scores 16 scanners; the agent is known to drive four of them. Ranking
     the rest would hand the user a confident pick their pipeline cannot run — so the
     pick ranks only models with an enabled agent_runtime_config, and the response
     reports both counts so the narrowing is visible rather than silent. The excluded
@@ -259,7 +259,7 @@ def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
     stores an env var NAME, so the key is always the user's. The security runtime
     (OpenCode) already speaks most of these providers, so the ranked set widens with a
     verification run, not adapter code — which is how DeepSeek V4 Flash joined it at
-    P38g."""
+    P38g and GPT-5.5 at P38h."""
     load_seed(db_session)
     headers = _auth_header(client)
 
@@ -271,8 +271,8 @@ def test_pick_is_restricted_to_models_the_agent_can_run(client, db_session):
 
     group = body["comparabilityGroup"]
     assert group["candidateCount"] == 16  # everything RealVuln scored
-    # what the agent can drive: DeepSeek V4 Flash, Gemini 3.5 Flash, Opus 5
-    assert group["rankedCount"] == 3
+    # what the agent can drive: DeepSeek V4 Flash, Gemini 3.5 Flash, Opus 5, GPT-5.5
+    assert group["rankedCount"] == 4
     assert group["rankedCount"] < group["candidateCount"]
 
     # the cost-leaning security pick comes from the runnable set. Since P38g that is
