@@ -9,8 +9,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.catalog.seed import load_seed
 from app.demo.seed import seed_demo_data
-from app.models import CiRun, Project, User
+from app.models import CiRun, JenkinsConnection, Project, User
 from app.models.orm import LlmCall, LlmUsage
+from app.projects.service import list_projects
 
 _EMAIL = "demo-seed@example.com"
 _PASSWORD = "demo-seed-pw-not-a-real-secret"
@@ -73,6 +74,41 @@ def test_demo_seed_is_idempotent_and_spends_no_tokens(db_session):
     # Zero tokens: the deterministic path never records an LLM call or usage tally.
     assert db_session.scalar(select(func.count()).select_from(LlmCall)) == 0
     assert db_session.scalar(select(func.count()).select_from(LlmUsage)) == 0
+
+
+def test_demo_seed_project_is_setup_complete(db_session):
+    """B2: the seeded project owns a Jenkins connection AND a minted CI token, so the
+    dashboard reads "setup complete" instead of badging the demo as half-configured.
+    Re-seeding must not mint a second token (the connection upserts, the token is
+    mint-once) — the demo never ingests over the API, so the plaintext is discarded."""
+    load_seed(db_session)
+    seed_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
+    )
+
+    project = db_session.scalar(select(Project).where(Project.name == "demo-api"))
+    conn = db_session.scalar(
+        select(JenkinsConnection).where(JenkinsConnection.project_id == project.id)
+    )
+    assert conn is not None
+    assert conn.base_url == "https://jenkins.example.invalid"
+    assert conn.job_name == "demo-api/main"
+    assert conn.status == "configured"
+    assert conn.ci_token_hash is not None  # minted; only the hash is stored
+    first_hash = conn.ci_token_hash
+
+    user = db_session.scalar(select(User).where(User.email == _EMAIL))
+    assert list_projects(db_session, user)[0].setup_complete is True
+
+    # a redeploy re-fires the hook: same connection, same token (no rotation)
+    seed_demo_data(
+        db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=5
+    )
+    db_session.refresh(conn)
+    assert conn.ci_token_hash == first_hash
+    assert (
+        db_session.scalar(select(func.count()).select_from(JenkinsConnection)) == 1
+    )
 
 
 def test_demo_seed_main_skips_when_disabled(monkeypatch, capsys):

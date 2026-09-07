@@ -46,7 +46,7 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     # acceptance_rate is a 0–1 fraction (see app.quality.service); scale for display.
     rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate * 100:.0f}%"
     lines = [
-        "Spend summary (authoritative — computed by ModelMatch, not by you):",
+        "Spend summary (authoritative, computed by ModelMatch, not by you):",
         f"- Selected model (runs the CI review agent): {selected}",
         f"- Baseline model (the expensive default, costed but not run): {baseline}",
         f"- CI runs in range: {k.runs_count} "
@@ -74,7 +74,7 @@ def build_opener(savings: SavingsResponse) -> str:
         return (
             "Hi! I'm your ModelMatch assistant. Once your Jenkins pipeline runs the "
             "CI code-review agent (it flags security risks and coding-style issues in "
-            "your PR diffs), I'll explain your spend here — how much the recommended "
+            "your PR diffs), I'll explain your spend here: how much the recommended "
             "model is saving you versus the baseline, and whether review quality is "
             "holding up. No runs yet, so there's nothing to total. Ask me about the "
             "model catalog any time."
@@ -87,9 +87,9 @@ def build_opener(savings: SavingsResponse) -> str:
 
     if k.quality_status == "banking":
         quality_line = (
-            f"Review quality is holding — finding acceptance is "
+            f"Review quality is holding. Finding acceptance is "
             f"{_pct(None if k.acceptance_rate is None else k.acceptance_rate * 100)}, "
-            f"at or above your {k.threshold * 100:.0f}% threshold — so those savings count."
+            f"at or above your {k.threshold * 100:.0f}% threshold, so those savings count."
         )
     elif k.quality_status == "quality_risk":
         quality_line = (
@@ -107,7 +107,7 @@ def build_opener(savings: SavingsResponse) -> str:
     return (
         f"Here's your spend so far. Across {k.runs_count} CI run(s), {selected} has "
         f"reviewed your PR diffs (security + coding-style) for {_money(k.spend_this_period)}, "
-        f"versus running {baseline} — saving you {saved}{pct}. {quality_line} "
+        f"versus running {baseline}, saving you {saved}{pct}. {quality_line} "
         "Ask me anything about these numbers, the quality, or the model catalog."
     )
 
