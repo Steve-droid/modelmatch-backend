@@ -223,7 +223,7 @@ by content hash, and it skips rather than guesses: a scanner with no published p
 reported as skipped, never priced by assumption.
 
 **The pick is restricted to runnable models.** A benchmark scores many models the agent has
-no verified path to — RealVuln measures DeepSeek, Moonshot, Z.AI and local open-weight
+no verified path to — RealVuln measures MiniMax, Moonshot, Z.AI and local open-weight
 builds. Recommending one would hand the user a model their pipeline cannot run, so ranking
 considers only models with an enabled `agent_runtime_config`, and the response reports
 `rankedCount` against `candidateCount` so the narrowing is visible. Excluded rows stay in the
@@ -234,9 +234,9 @@ To be precise about that bar: an `agent_runtime_config` row is a claim about wha
 `credential_env_var` stores an env var *name* — the key is always the user's, supplied in
 their own pipeline. We list a model once we have verified the agent can drive it. For the
 security task that is cheap, since the runtime is the OpenCode CLI, which already speaks
-DeepSeek, Moonshot, Z.AI and Together: a row plus a verification run, no adapter code. Only
-local open-weight builds (own GPU hardware) and models scored under a harness we do not run
-are genuinely out of reach.
+DeepSeek, Moonshot, Z.AI and Together: a row plus a verification run, no adapter code — which
+is how DeepSeek V4 Flash was added at P38g. Only local open-weight builds (own GPU hardware)
+and models scored under a harness we do not run are genuinely out of reach.
 
 ## Tests
 
