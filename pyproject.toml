@@ -35,11 +35,14 @@ llm = [
     "anthropic>=0.39",
     "google-genai>=1.0",
     "boto3>=1.35",
-    # Floor cryptography past GHSA-537c-gmf6-5ccf (vulnerable OpenSSL bundled in the
-    # 48.0.0 wheel). Pulled transitively by google-genai (-> google-auth). Only the
+    # Floor cryptography past GHSA-537c-gmf6-5ccf (48.0.0, bundled OpenSSL) and
+    # CVE-2026-69247 (49.0.0, PKCS#7) — Trivy gate on the agent image, 2026-09-08. Pulled transitively by google-genai (-> google-auth). Only the
     # agent image (--extra llm) ships it; keeps the agent pip-audit + Trivy gates green —
     # remediate-not-waive. (The backend --extra bedrock set never pulls cryptography.)
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
+    # Floor pyasn1 past CVE-2026-59884/59885/59886 (BER/ASN.1 DoS). Pulled transitively
+    # by google-genai (-> google-auth -> rsa). Same remediate-not-waive rule; agent-only.
+    "pyasn1>=0.6.4",
 ]
 
 [dependency-groups]

@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1
+#
+# modelmatch-agent-security — the SECURITY task image: a bounded OpenCode agentic loop
+# over a READ-ONLY checkout (RealVuln's auditor prompt, Semgrep JSON → findings with CWE,
+# any critical finding → non-zero exit → the Jenkins stage fails). The review task ships
+# as its own image: agent/Dockerfile.
+#
+# Build from the REPO ROOT as context:
+#     docker buildx build --platform linux/amd64 -f agent/Dockerfile.security -t modelmatch-agent-security .
+# Run (BYOK key passed BY NAME, workspace read-only, sandbox flags):
+#     docker run --rm -v "$PWD:/workspace:ro" --cap-drop ALL --security-opt no-new-privileges \
+#       --memory 2g --cpus 2 --tmpfs /tmp:size=256m \
+#       -e AGENT_MODEL=deepseek/deepseek-v4-flash -e DEEPSEEK_API_KEY modelmatch-agent-security
+#
+# Size discipline (measured 2026-09-08; the first cut — Node 22 + npm install — was 997 MB):
+#   * OpenCode is ONE static-ish binary (bun-compiled; links only libc/libm/libdl). It is
+#     fetched from the pinned GitHub release and verified by sha256 in a throw-away stage:
+#     no Node, no npm, no NodeSource apt repo, no curl/gnupg in the runtime. The binary is
+#     ~176 MB uncompressed — that is the floor for this image, and it is the runtime.
+#   * the venv holds only what the loop imports — pydantic(+email) / pydantic-settings /
+#     prometheus-client — resolved against the frozen lock as constraints; no provider
+#     SDKs (OpenCode talks to the providers), none of the backend's packages.
+#   * apt: ripgrep (an OpenCode runtime dependency), git (OpenCode snapshots the workspace
+#     through git; also lets a checkout's history be inspected), ca-certificates. Lists
+#     cleaned; the exploration extras from RealVuln's sandbox (tree, file) are not needed —
+#     OpenCode's own glob/grep/read/bash tools are what the model actually calls.
+#   * no bytecode, no pip/ensurepip, no shell entrypoint (credential remap is Python).
+#   * dist-info stays: that is what Trivy reads.
+
+ARG PYTHON_IMAGE=python:3.12-slim
+
+# ---------------------------------------------------------------- builder (venv)
+FROM ${PYTHON_IMAGE} AS builder
+COPY --from=ghcr.io/astral-sh/uv:python3.12-bookworm@sha256:85d4cb1afa769a7338e095b927bee941cf5ec92266c7424b3f6c0f2748567248 /usr/local/bin/uv /bin/uv
+WORKDIR /build
+ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=0
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv export --frozen --no-dev --no-hashes --no-emit-project -o constraints.txt \
+ && uv venv /venv \
+ && uv pip install --python /venv -c constraints.txt \
+      "pydantic[email]" pydantic-settings prometheus-client \
+ && find /venv -name "__pycache__" -type d -prune -exec rm -rf {} +
+
+# ---------------------------------------------------------------- opencode (fetch + verify)
+FROM ${PYTHON_IMAGE} AS opencode
+ARG OPENCODE_VERSION=1.18.20
+# sha256 of opencode-linux-x64.tar.gz for v1.18.20 (the project publishes no checksum
+# file; pinned here from a verified download on 2026-09-08). Bump both together.
+ARG OPENCODE_SHA256=8603214aa1e2e18f9312360c9360dfae6174f5cff6dc4f72b6045c80608af4d4
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && curl -fsSL -o /tmp/opencode.tgz \
+      "https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" \
+ && echo "${OPENCODE_SHA256}  /tmp/opencode.tgz" | sha256sum -c - \
+ && mkdir -p /opt/opencode && tar -xzf /tmp/opencode.tgz -C /opt/opencode \
+ && chmod 755 /opt/opencode/opencode && /opt/opencode/opencode --version
+
+# ---------------------------------------------------------------- runtime
+FROM ${PYTHON_IMAGE} AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ # nothing installs at run time: the base image's pip/ensurepip + stdlib bytecode leave
+ && rm -rf /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/ensurepip \
+           /usr/local/bin/pip* \
+ && find /usr/local/lib/python3.12 -name "__pycache__" -type d -prune -exec rm -rf {} + \
+ && useradd --create-home --uid 10001 appuser
+WORKDIR /app
+COPY --from=opencode --chown=root:root /opt/opencode/opencode /usr/local/bin/opencode
+COPY --from=builder --chown=root:root /venv /venv
+COPY --chown=root:root app ./app
+COPY --chown=root:root agent ./agent
+# HOME must be writable: OpenCode keeps its session store under ~/.local/share/opencode,
+# which is how it audits a READ-ONLY /workspace without writing to it.
+ENV PATH="/venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    PYTHONSAFEPATH=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/appuser \
+    AGENT_IMAGE_TASK=security \
+    MODELMATCH_TASK=security \
+    AGENT_WORKSPACE=/workspace
+USER appuser
+# never edits the repo: /workspace is mounted :ro; results go to stdout (and /ci-runs)
+ENTRYPOINT ["python", "-m", "agent"]
