@@ -192,7 +192,11 @@ def test_cli_main_passes_bedrock_region_to_client(monkeypatch, capsys):
             ),
         )
 
-    monkeypatch.setattr(agent_main, "build_llm_client", _build)
+    # The factory import is lazy (only the review image ships the SDKs), so patch it
+    # at its source rather than on the CLI module.
+    import app.llm.factory as factory
+
+    monkeypatch.setattr(factory, "build_llm_client", _build)
     monkeypatch.setattr(agent_main, "review", _review)
     monkeypatch.setattr(
         agent_main.logging, "basicConfig", lambda **_kwargs: None

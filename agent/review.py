@@ -1,23 +1,36 @@
-"""The review itself: diff → strict prompt → LLMClient → validated findings + gate.
+"""The review task: diff → strict prompt → LLMClient → validated findings + gate.
 
 Pure-ish and read-only: it takes a diff string + an LLMClient and returns an
-AgentResult. It never touches the filesystem or the repo. The model is told to
+AgentRunResult. It never touches the filesystem or the repo. The model is told to
 return STRICT JSON; anything else is rejected (MalformedFindings) rather than
-guessed. A per-run token ceiling aborts the run before it can run away on the
-user's key.
+guessed — unless it reads as a refusal, which gets its own outcome (ModelRefused,
+exit 3) so it can never be mistaken for a clean review. A per-run token ceiling
+aborts the run before it can run away on the user's key.
+
+Since 1.1.0 the project's review preferences (from the API, HLD §3b.1) are appended
+to the system prompt, so a project can steer the review without touching its
+Jenkinsfile.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from pydantic import ValidationError
 
 from agent.config import AgentConfig
+from agent.errors import (  # noqa: F401 — re-exported for callers/tests
+    CeilingExceeded,
+    MalformedFindings,
+    ModelRefused,
+    TokenCeilingExceeded,
+    looks_like_refusal,
+)
+from agent.schemas import AgentFinding, AgentRunResult
 from app.llm.base import LLMClient, approx_tokens
 from app.observability import LLMObservation, log_llm_call
-from app.schemas.findings import AgentResult, Finding
 
 SYSTEM_PROMPT = (
     "You are a strict CI code-review agent. Review ONLY the provided unified diff "
@@ -29,13 +42,28 @@ SYSTEM_PROMPT = (
     "Use an empty findings array if there are no issues. Never include prose."
 )
 
+PREFERENCES_HEADING = "Project review preferences (set by the project owner; follow them):"
+MAX_PREFERENCES_CHARS = 2000
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
-class MalformedFindings(Exception):
-    """The model returned something that isn't the agreed findings JSON."""
+
+def sanitize_preferences(text: str | None) -> str | None:
+    """Bounded, control-character-free preference text (untrusted user input that
+    lands in a prompt): strip control chars, collapse whitespace runs, cap length."""
+    if text is None:
+        return None
+    t = _CONTROL_CHARS.sub("", text)
+    t = re.sub(r"[ \t]+", " ", t).strip()
+    if not t:
+        return None
+    return t[:MAX_PREFERENCES_CHARS]
 
 
-class TokenCeilingExceeded(Exception):
-    """The run exceeded its cumulative token budget and was aborted."""
+def build_system_prompt(review_preferences: str | None = None) -> str:
+    prefs = sanitize_preferences(review_preferences)
+    if not prefs:
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n{PREFERENCES_HEADING}\n{prefs}"
 
 
 def build_user_prompt(diff: str) -> str:
@@ -62,24 +90,30 @@ def _strip_code_fence(text: str) -> str:
     return t.strip()
 
 
-def parse_findings(text: str) -> list[Finding]:
-    """Strictly parse the model's JSON into validated Findings (untrusted output)."""
+def parse_findings(text: str) -> list[AgentFinding]:
+    """Strictly parse the model's JSON into validated findings (untrusted output).
+
+    Prose that reads as a refusal is ModelRefused (exit 3), not MalformedFindings —
+    a declined review must never look like a clean one.
+    """
     try:
         data = json.loads(_strip_code_fence(text))
     except json.JSONDecodeError as exc:
+        if looks_like_refusal(text):
+            raise ModelRefused("the model declined the review instead of returning findings") from exc
         raise MalformedFindings(f"response was not valid JSON: {exc}") from exc
 
     raw = data.get("findings") if isinstance(data, dict) else data
     if not isinstance(raw, list):
         raise MalformedFindings("expected a 'findings' array")
     try:
-        return [Finding.model_validate(item) for item in raw]
+        return [AgentFinding.model_validate(item) for item in raw]
     except ValidationError as exc:
         raise MalformedFindings(f"finding failed validation: {exc}") from exc
 
 
 def apply_gate(
-    findings: list[Finding], fail_severities: list[str]
+    findings: list[AgentFinding], fail_severities: list[str]
 ) -> tuple[str, str | None]:
     """Pass/fail decision (in CI). Fails on any finding at a fail-severity."""
     fail = [f for f in findings if f.severity in fail_severities]
@@ -118,29 +152,33 @@ def _log_agent_call(
     )
 
 
-def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentResult:
+def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentRunResult:
     """Run one review pass and return the result. Read-only; no filesystem writes."""
+    system_prompt = build_system_prompt(config.review_preferences)
     user_prompt = build_user_prompt(diff)
     provider = config.llm_client
+    token_ceiling = config.effective_token_ceiling("review")
+    fail_severities = config.effective_fail_severities("review")
 
     # Preflight: estimate worst-case usage (prompt in + max output) and abort BEFORE
     # calling the provider, so an oversized diff never spends on the user's key.
     estimated = (
-        approx_tokens(SYSTEM_PROMPT) + approx_tokens(user_prompt) + config.max_tokens
+        approx_tokens(system_prompt) + approx_tokens(user_prompt) + config.max_tokens
     )
-    if estimated > config.token_ceiling:
+    if estimated > token_ceiling:
         _log_agent_call(
             model=config.model_id, tokens_in=0, tokens_out=0, provider=provider,
             status="error", error_kind="TokenCeilingExceeded",
         )
-        raise TokenCeilingExceeded(
-            f"estimated {estimated} tokens exceeds ceiling {config.token_ceiling} "
-            "(aborted before the provider call)"
+        raise CeilingExceeded(
+            "token",
+            f"estimated {estimated} tokens exceeds ceiling {token_ceiling} "
+            "(aborted before the provider call)",
         )
 
     try:
         started = time.perf_counter()
-        resp = client.complete(SYSTEM_PROMPT, user_prompt, config.max_tokens)
+        resp = client.complete(system_prompt, user_prompt, config.max_tokens)
         latency_ms = int((time.perf_counter() - started) * 1000)
     except Exception as exc:
         # Provider/client failure — log the exception CLASS only (never its message,
@@ -153,23 +191,21 @@ def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentResult:
 
     # Post-call: enforce against actual usage too.
     used = resp.tokens_in + resp.tokens_out
-    if used > config.token_ceiling:
+    if used > token_ceiling:
         _log_agent_call(
             model=resp.model, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
             provider=provider, latency_ms=latency_ms,
             status="error", error_kind="TokenCeilingExceeded",
         )
-        raise TokenCeilingExceeded(
-            f"run used {used} tokens, ceiling is {config.token_ceiling}"
-        )
+        raise CeilingExceeded("token", f"run used {used} tokens, ceiling is {token_ceiling}")
 
     try:
         findings = parse_findings(resp.text)
-    except MalformedFindings:
+    except (MalformedFindings, ModelRefused) as exc:
         _log_agent_call(
             model=resp.model, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
             provider=provider, latency_ms=latency_ms,
-            status="error", error_kind="MalformedFindings",
+            status="error", error_kind=type(exc).__name__,
         )
         raise
 
@@ -179,8 +215,8 @@ def review(diff: str, client: LLMClient, config: AgentConfig) -> AgentResult:
         provider=provider, latency_ms=latency_ms, status="ok",
     )
 
-    gate, reason = apply_gate(findings, config.fail_severities)
-    return AgentResult(
+    gate, reason = apply_gate(findings, fail_severities)
+    return AgentRunResult(
         findings=findings,
         tokens_in=resp.tokens_in,
         tokens_out=resp.tokens_out,

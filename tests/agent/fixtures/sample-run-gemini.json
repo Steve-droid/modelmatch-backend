@@ -1,0 +1,56 @@
+{
+  "version": "1.0.0",
+  "results": [
+    {
+      "check_id": "python.security.injection.ssti",
+      "path": "app/main.py",
+      "start": {
+        "line": 41,
+        "col": 12,
+        "offset": 1291
+      },
+      "end": {
+        "line": 41,
+        "col": 37,
+        "offset": 1328
+      },
+      "extra": {
+        "message": "User-controlled input 'name' is directly formatted into a string template which is then compiled and rendered using Jinja2 (Template(content).render()). This allows for Server-Side Template Injection (SSTI), which can lead to Remote Code Execution (RCE).",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": [
+            "CWE-94: Improper Control of Generation of Code ('Code Injection')",
+            "CWE-1336: Improper Neutralization of Special Elements Used in a Template Engine"
+          ],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    },
+    {
+      "check_id": "python.security.hardcoded-credentials",
+      "path": "app/config.py",
+      "start": {
+        "line": 15,
+        "col": 1,
+        "offset": 353
+      },
+      "end": {
+        "line": 15,
+        "col": 81,
+        "offset": 434
+      },
+      "extra": {
+        "message": "A hardcoded secret token 'SUPER_SECRET_TOKEN' is defined directly in config.py instead of being retrieved from environment variables. This exposes sensitive credentials to version control and potential unauthorized access.",
+        "severity": "INFO",
+        "metadata": {
+          "cwe": [
+            "CWE-798: Use of Hardcoded Credentials"
+          ],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    }
+  ]
+}

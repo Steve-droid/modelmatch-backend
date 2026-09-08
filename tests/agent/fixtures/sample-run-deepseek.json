@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "results": [
+    {
+      "check_id": "python.security.injection.ssti",
+      "path": "app/main.py",
+      "start": {
+        "line": 38,
+        "col": 28,
+        "offset": 1112
+      },
+      "end": {
+        "line": 41,
+        "col": 37,
+        "offset": 1328
+      },
+      "extra": {
+        "message": "Server-Side Template Injection (SSTI). The user-controlled 'name' query parameter (bound at line 19) is interpolated directly into a Jinja2 template string on line 38 (content = f\"<h1>Hello, {name}!...\"), and the resulting template is rendered with Template(content).render() on line 41. Jinja2 templates are evaluated with no sandbox and no autoescaping, so a request such as /?name={{7*7}} is evaluated server-side, and arbitrary code execution is achievable through Jinja2 built-in globals (e.g. /?name={{lipsum.__globals__['os'].popen('id').read()}}). This allows remote code execution on the server.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": [
+            "CWE-1336: Server-Side Template Injection"
+          ],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    },
+    {
+      "check_id": "python.security.injection.xss.reflected",
+      "path": "app/main.py",
+      "start": {
+        "line": 38,
+        "col": 28,
+        "offset": 1112
+      },
+      "end": {
+        "line": 41,
+        "col": 37,
+        "offset": 1328
+      },
+      "extra": {
+        "message": "Reflected Cross-Site Scripting (XSS). The user-controlled 'name' query parameter (line 19) is concatenated into an HTML string at line 38 and returned by a route that declares response_class=HTMLResponse, producing a text/html response. Because Template(content).render() applies no HTML autoescaping and the string is not otherwise escaped, an attacker can inject arbitrary HTML/JavaScript via /?name=<script>alert(document.cookie)</script>, which executes in the victim's browser. Escape the name value (and any other dynamic content) before embedding it in HTML.",
+        "severity": "WARNING",
+        "metadata": {
+          "cwe": [
+            "CWE-79: Cross-Site Scripting (XSS)"
+          ],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    },
+    {
+      "check_id": "python.security.credentials.hardcoded-secret",
+      "path": "app/config.py",
+      "start": {
+        "line": 13,
+        "col": 1,
+        "offset": 277
+      },
+      "end": {
+        "line": 15,
+        "col": 38,
+        "offset": 390
+      },
+      "extra": {
+        "message": "Hardcoded credentials/secrets in source code. SUPER_SECRET_NAME is hardcoded to 'John Ripper' (line 13) and SUPER_SECRET_TOKEN is hardcoded to '5u93R53Cr3tT0k3n' (line 15). The accompanying FIXME comments indicate these values should be loaded from environment variables via os.getenv(). Because this file is committed to the repository, any real secret placed here would be exposed to everyone with repository access and would never rotate. Load secrets from the environment (or a secret manager) instead of embedding them in code.",
+        "severity": "INFO",
+        "metadata": {
+          "cwe": [
+            "CWE-798: Use of Hardcoded Credentials"
+          ],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    },
+    {
+      "check_id": "python.security.audit.sensitive-data-exposure",
+      "path": "app/main.py",
+      "start": {
+        "line": 37,
+        "col": 27,
+        "offset": 1067
+      },
+      "end": {
+        "line": 38,
+        "col": 33,
+        "offset": 1118
+      },
+      "extra": {
+        "message": "Sensitive data exposure / information disclosure. The FastAPI endpoint uses config.SUPER_SECRET_NAME as the default value of the 'name' parameter (line 19) and again falls back to it when name is empty (line 37), then reflects it into the HTML response (line 38). As a result, any anonymous visitor to '/' receives the SUPER_SECRET_NAME value in the rendered page body (the tests assert 'Hello, John Ripper!' is returned). If a real secret is supplied via the SUPER_SECRET_NAME environment variable, it is disclosed to every client. The secret should never be used as a default/reflected parameter value.",
+        "severity": "INFO",
+        "metadata": {
+          "cwe": [
+            "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor"
+          ],
+          "confidence": "MEDIUM",
+          "category": "security"
+        }
+      }
+    }
+  ]
+}
