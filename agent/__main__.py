@@ -7,7 +7,7 @@ Two tasks, one image, one exit-code table (agent/errors.py):
     security  OpenCode agentic loop over the read-only workspace, RealVuln auditor
               prompt, Semgrep JSON → findings with CWE, gate on critical.
 
-Which task, which model and (review) which preferences come from the ModelMatch
+Which task, which model and (review) which preferences come from the Modicum
 API when MODELMATCH_API_URL + MODELMATCH_PROJECT_ID + MODELMATCH_CI_TOKEN are set
 (HLD §3b.1); otherwise from env (MODELMATCH_TASK / AGENT_MODEL) for local and
 fixture runs. The result JSON goes to stdout; with MODELMATCH_POST_RESULT=true it is
@@ -128,7 +128,7 @@ def _resolve(config: AgentConfig) -> tuple[AgentConfig, str, RemoteConfig | None
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="agent", description="ModelMatch CI agent (review | security)")
+    parser = argparse.ArgumentParser(prog="agent", description="Modicum CI agent (review | security)")
     parser.add_argument("--diff", help="review: path to a unified diff (default: stdin)")
     args = parser.parse_args(argv)
 

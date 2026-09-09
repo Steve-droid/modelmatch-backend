@@ -85,7 +85,7 @@ def recommend(
         r.id: r for r in rows if r.score is not None and r.cost_per_mtok is not None
     }
 
-    # ①b restrict to models the pipeline can actually reach (P38c). ModelMatch's
+    # ①b restrict to models the pipeline can actually reach (P38c). Modicum's
     # output is a model to deploy, so a row with no enabled agent_runtime_config — no
     # credential the generated snippet can inject — is not a recommendation we can
     # honour. Benchmarks score plenty of models the agent has no verified path to

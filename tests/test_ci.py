@@ -619,7 +619,7 @@ def test_security_project_gets_the_security_stage(client, db_session, monkeypatc
     assert body["imageRef"] == "registry/modelmatch-agent-security:1.1.0"
     assert "registry/modelmatch-agent-security:1.1.0\n" in snippet  # the image, no args
     assert "modelmatch-agent:1.1.0" not in snippet                    # not the review image
-    assert "stage('ModelMatch Security Analysis')" in snippet
+    assert "stage('Modicum Security Analysis')" in snippet
     assert f'-v "$PWD:{SECURITY_WORKSPACE}:ro"' in snippet
     for flag in _SECURITY_SANDBOX:
         assert flag in snippet
@@ -653,7 +653,7 @@ def test_review_project_uses_the_review_image(client, db_session, monkeypatch):
     assert body["imageRef"] == "registry/modelmatch-agent:1.1.0"
     assert "registry/modelmatch-agent:1.1.0 --diff pr.diff" in body["snippet"]
     assert "modelmatch-agent-security" not in body["snippet"]
-    assert "stage('ModelMatch AI Review')" in body["snippet"]
+    assert "stage('Modicum AI Review')" in body["snippet"]
 
 
 def test_security_snippet_bedrock_variant_mounts_aws_profile():

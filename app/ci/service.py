@@ -136,13 +136,13 @@ def _image_note(image_ref: str) -> str:
 # no findings, so it must never read as clean — the stage says so in its own words.
 def _exit_case(*, pass_msg: str, fail_msg: str, nothing_verb: str) -> str:
     return f"""        case "$AGENT_RC" in
-          0)   echo "ModelMatch: {pass_msg}" ;;
-          1)   echo "ModelMatch: {fail_msg} — failing the stage." ;;
-          2)   echo "ModelMatch: unparseable model output — NOT a pass." ;;
-          3)   echo "ModelMatch: the model REFUSED. Nothing was {nothing_verb}. NOT a pass." ;;
-          4)   echo "ModelMatch: config / credential / API error (see above) — NOT a pass." ;;
-          124) echo "ModelMatch: a run ceiling aborted the agent — NOT a pass." ;;
-          *)   echo "ModelMatch: unexpected agent exit $AGENT_RC — treating as failure." ;;
+          0)   echo "Modicum: {pass_msg}" ;;
+          1)   echo "Modicum: {fail_msg} — failing the stage." ;;
+          2)   echo "Modicum: unparseable model output — NOT a pass." ;;
+          3)   echo "Modicum: the model REFUSED. Nothing was {nothing_verb}. NOT a pass." ;;
+          4)   echo "Modicum: config / credential / API error (see above) — NOT a pass." ;;
+          124) echo "Modicum: a run ceiling aborted the agent — NOT a pass." ;;
+          *)   echo "Modicum: unexpected agent exit $AGENT_RC — treating as failure." ;;
         esac
         exit $AGENT_RC"""
 
@@ -185,9 +185,9 @@ def build_review_snippet(
         nothing_verb="reviewed",
     )
     return f"""// Runs on a normal Jenkins node (needs: docker, git). The agent fetches this
-// project's task, model and review preferences from ModelMatch at run time and posts
+// project's task, model and review preferences from Modicum at run time and posts
 // the run itself — change them in the app, not here.
-stage('ModelMatch AI Review') {{
+stage('Modicum AI Review') {{
   agent any
   environment {{
     // The per-project CI token (shown once by /ci-setup) — add as 'Secret text' '{CI_TOKEN_CRED_ID}'.
@@ -243,9 +243,9 @@ def build_security_snippet(
         nothing_verb="scanned",
     )
     return f"""// Runs on a normal Jenkins node (needs: docker). The agent audits the whole checkout
-// READ-ONLY with the model ModelMatch configured for this project, posts the run itself
+// READ-ONLY with the model Modicum configured for this project, posts the run itself
 // and fails the stage on a critical finding.
-stage('ModelMatch Security Analysis') {{
+stage('Modicum Security Analysis') {{
   agent any
   environment {{
     // The per-project CI token (shown once by /ci-setup) — add as 'Secret text' '{CI_TOKEN_CRED_ID}'.

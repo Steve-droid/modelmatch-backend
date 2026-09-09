@@ -1,6 +1,6 @@
 """S14b grounded Q&A chat tests — mirrors the ABC SQL-RAG validation strategy.
 
-Layers (the ABC discipline, applied to ModelMatch's hybrid pipeline):
+Layers (the ABC discipline, applied to Modicum's hybrid pipeline):
 - PURE / model-free (fast, $0): the SELECT-only gate rejects unsafe SQL; the curated
   schema-context leaks no secret/tenant tables; prompts render (untrusted braces
   survive) and carry the product framing + trichotomy tokens; LLM #1 output parses to
