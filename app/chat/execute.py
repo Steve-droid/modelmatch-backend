@@ -31,7 +31,10 @@ def get_readonly_engine() -> Engine:
     global _readonly_engine
     if _readonly_engine is None:
         _readonly_engine = create_engine(
-            get_settings().chat_database_url, pool_pre_ping=True
+            get_settings().chat_database_url, pool_pre_ping=True,
+            pool_size=get_settings().chat_db_pool_size,
+            max_overflow=get_settings().chat_db_max_overflow,
+            pool_timeout=get_settings().db_pool_timeout,
         )
     return _readonly_engine
 

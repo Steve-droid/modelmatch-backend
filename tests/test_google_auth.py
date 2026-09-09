@@ -72,7 +72,7 @@ def test_registration_returning_login_and_no_password(client, db_session, google
     assert user.email == "new@example.com"
     assert client.post("/auth/login", json={"email": user.email, "password": ""}).status_code == 401
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {first.json()['accessToken']}"})
-    assert me.json() == {"id": user.id, "email": user.email}
+    assert me.json() == {"id": user.id, "email": user.email, "chatEnabled": False}
 
 def test_password_account_never_linked(client, db_session, google_env):
     password = {"email": "New@example.com", "password": "original-password"}

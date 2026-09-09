@@ -56,6 +56,17 @@ class Settings(BaseSettings):
 
     # Optional Google Identity Services login. Public OAuth WEB client ID; no secret.
     google_client_id: str = ""
+    # Public-demo admission and operator features. Zero closes new registration.
+    max_registered_users: int = Field(default=700, ge=0)
+    chat_enabled: bool = True
+    auth_rate_limit_enabled: bool = True
+    auth_requests_per_minute: int = Field(default=120, ge=1)
+    auth_burst: int = Field(default=4, ge=1, le=20)
+    db_pool_size: int = Field(default=5, ge=1)
+    db_max_overflow: int = Field(default=5, ge=0)
+    chat_db_pool_size: int = Field(default=2, ge=1)
+    chat_db_max_overflow: int = Field(default=2, ge=0)
+    db_pool_timeout: int = Field(default=5, ge=1)
 
     # Deterministic recommender (S6). The quality↔cost slider's w_q is preset by
     # budget_sensitivity; w_c = 1 − w_q. low → quality-leaning, high → cost-leaning.

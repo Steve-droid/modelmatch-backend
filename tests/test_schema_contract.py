@@ -15,7 +15,7 @@ from app import schemas
 # alias (camelCase) field names each schema exposes on the wire.
 CONTRACT = {
     "UserCreate": {"email", "password"},
-    "UserOut": {"id", "email"},
+    "UserOut": {"id", "email", "chatEnabled"},
     "ModelCreate": {
         "name", "vendor", "pricePerMtok", "inputPricePerMtok", "outputPricePerMtok",
         "dataPolicy",

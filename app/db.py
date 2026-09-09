@@ -13,7 +13,10 @@ from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
 from app.observability.metrics import observe_db_query
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+settings = get_settings()
+engine = create_engine(settings.database_url, pool_pre_ping=True,
+                       pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow,
+                       pool_timeout=settings.db_pool_timeout)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
