@@ -15,10 +15,35 @@ from app.agent_runtime import require_enabled_runtime_config
 from app.auth.deps import require_owner
 from app.models import JenkinsConnection, Model, Project, RecommendationOption, User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
+from app.tasks import CI_REVIEW, is_project_task
 
 
 def _not_found(what: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{what} not found")
+
+
+def task_type_of_option(option: RecommendationOption) -> str:
+    """The task an option was ranked on = its requirements profile's task type (one,
+    in practice — the recommender rejects a mixed request). A profile without a
+    project task (older rows, `agentic_coding`) falls back to the review task."""
+    task_types = option.profile.task_types or []
+    return task_types[0] if task_types and is_project_task(task_types[0]) else CI_REVIEW
+
+
+def _resolve_task_type(option: RecommendationOption, requested: str | None) -> str:
+    """E20: a project's task must be the one its selected option was ranked on — an
+    option scored on RealVuln cannot back a review project (and vice versa). Omitted
+    → derived; given → must match (422 otherwise)."""
+    derived = task_type_of_option(option)
+    if requested is not None and requested != derived:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"taskType '{requested}' does not match the selected option, "
+                f"which was recommended for '{derived}'"
+            ),
+        )
+    return derived
 
 
 def _to_out(db: Session, project: Project) -> ProjectOut:
@@ -41,6 +66,8 @@ def _to_out(db: Session, project: Project) -> ProjectOut:
         baseline_model_id=project.baseline_model_id,
         baseline_model=baseline.name if baseline else "",
         baseline_vendor=baseline.vendor if baseline else "",
+        task_type=project.task_type,
+        review_preferences=project.review_preferences,
         setup_complete=setup_complete,
     )
 
@@ -64,6 +91,8 @@ def create_project(
         name=payload.name,
         selected_option_id=payload.selected_option_id,
         baseline_model_id=payload.baseline_model_id,
+        task_type=_resolve_task_type(option, payload.task_type),
+        review_preferences=payload.review_preferences,
     )
     db.add(project)
     db.commit()
@@ -106,6 +135,17 @@ def update_project(
         require_owner(option.profile.user_id, current_user)  # only your own option
         require_enabled_runtime_config(db, option.model_id, option.model.name)
         project.selected_option_id = data["selected_option_id"]
+        # A re-pick may move the project to the other task; the task follows the
+        # option (and an explicit taskType must agree with it).
+        project.task_type = _resolve_task_type(option, data.get("task_type"))
+    elif "task_type" in data and data["task_type"] is not None:
+        # Changing the task without re-picking: it must still match the current option.
+        option = db.get(RecommendationOption, project.selected_option_id)
+        if option is not None:
+            project.task_type = _resolve_task_type(option, data["task_type"])
+
+    if "review_preferences" in data:
+        project.review_preferences = data["review_preferences"]  # None clears
 
     if "baseline_model_id" in data:
         if db.get(Model, data["baseline_model_id"]) is None:

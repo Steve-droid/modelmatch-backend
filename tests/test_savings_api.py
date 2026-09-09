@@ -158,6 +158,7 @@ def test_savings_envelope_validates_against_schema(client, db_session):
     body = resp.json()
     assert set(body) == {
         "range",
+        "taskType",
         "selectedModel",
         "baselineModel",
         "kpis",

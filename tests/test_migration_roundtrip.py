@@ -200,3 +200,75 @@ def test_downgrade_reverses_tables_and_enum_types(migration_db):
         assert not leftover_enums, f"downgrade left enum types: {sorted(leftover_enums)}"
     finally:
         engine.dispose()
+
+
+def test_two_tasks_migration_backfills_task_and_cwe_and_reverses(migration_db):
+    """E20 (d1e2f3a4b5c6): upgrading a database that holds pre-E20 rows sets each
+    project's task from its recommendation, turns `code_review` runs into `ci_review`,
+    lifts the CWE prefix out of seeded security findings, and downgrades cleanly."""
+    from alembic import command
+
+    cfg, test_url = migration_db
+    command.upgrade(cfg, "c9d0e1f2a3b4")  # the revision before P38e
+
+    engine = create_engine(test_url)
+    try:
+        with engine.begin() as conn:
+            # ids from 900 up: the runtime-config seed migration already owns low model ids
+            conn.execute(text("INSERT INTO \"user\" (id, email, password_hash) VALUES (1, 'u@x', 'h')"))
+            conn.execute(text("INSERT INTO model (id, name, vendor) VALUES (900, 'M', 'V')"))
+            conn.execute(text(
+                "INSERT INTO requirements_profile (id, user_id, task_types) VALUES "
+                "(1, 1, ARRAY['ci_review']), (2, 1, ARRAY['security_analysis']), (3, 1, NULL)"
+            ))
+            conn.execute(text(
+                "INSERT INTO recommendation_option (id, profile_id, model_id) VALUES "
+                "(1, 1, 900), (2, 2, 900), (3, 3, 900)"
+            ))
+            conn.execute(text(
+                "INSERT INTO project (id, user_id, name, selected_option_id, baseline_model_id) VALUES "
+                "(1, 1, 'review', 1, 900), (2, 1, 'sec', 2, 900), (3, 1, 'legacy', 3, 900), (4, 1, 'none', NULL, 900)"
+            ))
+            conn.execute(text(
+                "INSERT INTO ci_run (id, project_id, jenkins_build_id, task) VALUES "
+                "(1, 1, 'a', 'code_review'), (2, 2, 'b', 'security_analysis')"
+            ))
+            conn.execute(text(
+                "INSERT INTO ci_finding (id, ci_run_id, severity, category, file, line, message) VALUES "
+                "(1, 2, 'critical', 'security', 'a.py', 1, 'CWE-89: SQL injection — request parameter concatenated'), "
+                "(2, 2, 'low', 'security', 'b.py', 2, 'CWE-327: weak hash (MD5) used for a security decision'), "
+                "(3, 1, 'low', 'style', 'c.py', 3, 'Unused import')"
+            ))
+
+        command.upgrade(cfg, "head")
+
+        with engine.connect() as conn:
+            tasks = dict(conn.execute(text("SELECT id, task_type FROM project ORDER BY id")).all())
+            assert tasks == {1: "ci_review", 2: "security_analysis", 3: "ci_review", 4: "ci_review"}
+            assert conn.execute(text("SELECT review_preferences FROM project WHERE id = 1")).scalar() is None
+            run_tasks = dict(conn.execute(text("SELECT id, task FROM ci_run ORDER BY id")).all())
+            assert run_tasks == {1: "ci_review", 2: "security_analysis"}
+            cwes = dict(conn.execute(text("SELECT id, cwe FROM ci_finding ORDER BY id")).all())
+            assert cwes == {
+                1: "CWE-89: SQL injection",
+                2: "CWE-327: weak hash (MD5) used for a security decision",
+                3: None,
+            }
+            assert conn.execute(text("SELECT cache_read_tokens FROM ci_run WHERE id = 1")).scalar() is None
+            # the new default applies to a fresh run
+            conn.execute(text("INSERT INTO ci_run (id, project_id, jenkins_build_id) VALUES (3, 1, 'c')"))
+            assert conn.execute(text("SELECT task FROM ci_run WHERE jenkins_build_id = 'c'")).scalar() == "ci_review"
+            conn.commit()
+
+        command.downgrade(cfg, "-1")
+        inspector = inspect(engine)
+        assert "task_type" not in {c["name"] for c in inspector.get_columns("project")}
+        assert "review_preferences" not in {c["name"] for c in inspector.get_columns("project")}
+        assert "cwe" not in {c["name"] for c in inspector.get_columns("ci_finding")}
+        assert "cache_read_tokens" not in {c["name"] for c in inspector.get_columns("ci_run")}
+        with engine.connect() as conn:
+            run_tasks = dict(conn.execute(text("SELECT id, task FROM ci_run ORDER BY id")).all())
+            assert run_tasks[1] == "code_review" and run_tasks[2] == "security_analysis"
+        command.upgrade(cfg, "head")  # up / down / up
+    finally:
+        engine.dispose()

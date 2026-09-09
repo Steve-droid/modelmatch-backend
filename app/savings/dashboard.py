@@ -89,8 +89,9 @@ def project_savings(
     model_names = {r[0].id: r[1] for r in rows}
     run_ids = [run.id for run in runs]
 
-    # Finding counts + feedback verdicts, grouped (no N+1) — empty when no runs.
+    # Finding counts, CWE ids + feedback verdicts, grouped (no N+1) — empty when no runs.
     counts: dict[int, int] = {}
+    cwes: dict[int, list[str]] = {}
     verdicts: dict[int, list[str]] = {}
     if run_ids:
         for run_id, n in db.execute(
@@ -99,6 +100,18 @@ def project_savings(
             .group_by(CiFinding.ci_run_id)
         ).all():
             counts[run_id] = n
+        # E20: the distinct CWE ids per run ("CWE-89"), in finding order, so the runs
+        # table can show them without a drill-in. The full "CWE-89: title" stays on
+        # the finding (run_findings below).
+        for run_id, cwe in db.execute(
+            select(CiFinding.ci_run_id, CiFinding.cwe)
+            .where(CiFinding.ci_run_id.in_(run_ids), CiFinding.cwe.is_not(None))
+            .order_by(CiFinding.id)
+        ).all():
+            ident = cwe.split(":", 1)[0].strip()
+            bucket = cwes.setdefault(run_id, [])
+            if ident and ident not in bucket:
+                bucket.append(ident)
         for run_id, verdict in db.execute(
             select(CiFinding.ci_run_id, FindingFeedback.verdict)
             .join(FindingFeedback, FindingFeedback.ci_finding_id == CiFinding.id)
@@ -121,13 +134,20 @@ def project_savings(
             gate=run.gate,
             findings_count=counts.get(run.id, 0),
             verdicts=tuple(verdicts.get(run.id, [])),
+            cwes=tuple(cwes.get(run.id, [])),
         )
         for run in runs
     ]
 
     threshold = get_settings().quality_threshold
     return assemble(
-        records, threshold, now, range_label, selected_model, baseline_model
+        records,
+        threshold,
+        now,
+        range_label,
+        selected_model,
+        baseline_model,
+        task_type=project.task_type,
     )
 
 
@@ -173,6 +193,7 @@ def run_findings(
                 file=f.file,
                 line=f.line,
                 message=f.message,
+                cwe=f.cwe,
                 verdict=my_verdicts.get(f.id),
             )
             for f in findings

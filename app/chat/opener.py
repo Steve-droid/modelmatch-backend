@@ -20,8 +20,37 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.schemas.savings import SavingsResponse
+from app.tasks import SECURITY_ANALYSIS, TASK_LABELS
 
 _SAVINGS_REF = "savings:project"
+
+# E20: what the agent DOES per task — the spend summary and the opener name it, so
+# the chat never describes a security scan as "reviewing PR diffs" (or vice versa).
+_TASK_DESCRIPTION = {
+    "ci_review": (
+        "one call per pull request: reviews the PR diff for security risks and "
+        "coding-style issues; findings gate the build on high/critical"
+    ),
+    SECURITY_ANALYSIS: (
+        "an agentic scan of the whole checkout for vulnerabilities; findings carry "
+        "CWE ids and a critical one fails the build"
+    ),
+}
+
+
+def task_line(task_type: str | None) -> str:
+    """'PR code review (ci_review)' — the label + the catalog vocabulary."""
+    if not task_type:
+        return "CI code review"
+    label = TASK_LABELS.get(task_type, task_type.replace("_", " "))
+    return f"{label} ({task_type})"
+
+
+def _task_verb(task_type: str | None) -> str:
+    """What the selected model has been doing, for the opener sentence."""
+    if task_type == SECURITY_ANALYSIS:
+        return "scanned your repository for vulnerabilities (agentic security analysis, CWE-tagged findings)"
+    return "reviewed your PR diffs (security + coding-style)"
 
 
 def _money(value: Decimal | None) -> str:
@@ -45,9 +74,12 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     baseline = savings.baseline_model or "the baseline"
     # acceptance_rate is a 0–1 fraction (see app.quality.service); scale for display.
     rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate * 100:.0f}%"
+    task = savings.task_type
     lines = [
         "Spend summary (authoritative, computed by ModelMatch, not by you):",
-        f"- Selected model (runs the CI review agent): {selected}",
+        f"- Task: {task_line(task)} — "
+        f"{_TASK_DESCRIPTION.get(task or '', 'the CI agent task for this project')}",
+        f"- Selected model (runs the CI agent for this task): {selected}",
         f"- Baseline model (the expensive default, costed but not run): {baseline}",
         f"- CI runs in range: {k.runs_count} "
         f"(banked {k.banked_runs}, quality-risk {k.quality_risk_runs}, "
@@ -105,10 +137,10 @@ def build_opener(savings: SavingsResponse) -> str:
         )
 
     return (
-        f"Here's your spend so far. Across {k.runs_count} CI run(s), {selected} has "
-        f"reviewed your PR diffs (security + coding-style) for {_money(k.spend_this_period)}, "
-        f"versus running {baseline}, saving you {saved}{pct}. {quality_line} "
-        "Ask me anything about these numbers, the quality, or the model catalog."
+        f"Here's your spend so far on {task_line(savings.task_type)}. Across "
+        f"{k.runs_count} CI run(s), {selected} has {_task_verb(savings.task_type)} for "
+        f"{_money(k.spend_this_period)}, versus running {baseline}, saving you {saved}{pct}. "
+        f"{quality_line} Ask me anything about these numbers, the quality, or the model catalog."
     )
 
 

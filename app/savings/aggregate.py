@@ -55,6 +55,7 @@ class RunRecord:
     gate: Optional[str] = None
     findings_count: int = 0
     verdicts: tuple[str, ...] = field(default_factory=tuple)
+    cwes: tuple[str, ...] = field(default_factory=tuple)  # E20: distinct CWE ids
 
 
 def _sum(values) -> Decimal:
@@ -80,6 +81,7 @@ def assemble(
     range_label: str = "all",
     selected_model: Optional[str] = None,
     baseline_model: Optional[str] = None,
+    task_type: Optional[str] = None,
 ) -> SavingsResponse:
     """Build the dashboard DTO from per-run records (pure; no DB, no LLM).
 
@@ -172,6 +174,7 @@ def assemble(
             acceptance_rate=acceptance_rate(r.verdicts),
             gate=r.gate,
             findings_count=r.findings_count,
+            cwes=list(r.cwes),
         )
         for r in runs_sorted
     ]
@@ -180,6 +183,7 @@ def assemble(
         range=range_label,
         selected_model=selected_model,
         baseline_model=baseline_model,
+        task_type=task_type,
         kpis=kpis,
         series=series,
         runs=runs,

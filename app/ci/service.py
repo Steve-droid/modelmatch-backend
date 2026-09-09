@@ -1,16 +1,21 @@
-"""CI integration service (S11): ci-setup snippet + run ingest.
+"""CI integration service (S11, E20): ci-setup snippet + agent-config + run ingest.
 
-Two operations close the CI savings loop:
+Three operations close the CI loop:
 - `ci_setup` (owner JWT): returns the Jenkins stage snippet the user pastes into
-  their pipeline. Mints the per-project ingest token *once* (stores only its hash)
-  and returns the plaintext on that first fetch; later fetches return token=None.
+  their pipeline — ONE PER TASK since E20 (review image vs security image). Mints
+  the per-project ingest token *once* (stores only its hash) and returns the
+  plaintext on that first fetch; later fetches return token=None.
+- `agent_config` (per-project token, HLD §3b.1): what the agent fetches at run time —
+  its task, the selected model's runtime config and the review preferences. The
+  snippet stays task-agnostic; the app is the source of truth.
 - `ingest_run` (per-project token): persists a `ci_run` + its `ci_finding` rows
   from the agent's `AgentResult`. DETERMINISTIC — no LLM, zero tokens; it only
   stores what the agent already computed.
 
-Scope (S11): persist tokens, model, build id, findings, AND the agent's gate +
-gate_reason as an audit trail (the pass/fail gate acts in the user's CI; the
-backend keeps the record). Savings (S12) + quality_ok (S13) stay null on insert.
+Scope: persist tokens, model, build id, findings (+ `cwe`), cache-read tokens, AND
+the agent's gate + gate_reason as an audit trail (the pass/fail gate acts in the
+user's CI; the backend keeps the record). Savings (S12) + quality_ok (S13) stay
+null on insert.
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ from app.models import (
 from app.observability import LLMObservation
 from app.observability.metrics import record_llm_metrics
 from app.savings.service import compute_savings, price_for
+from app.schemas.agent_config import AgentConfigModel, AgentConfigOut
 from app.schemas.ci import CiRunIngest, CiRunOut, CiSetupOut
+from app.tasks import CI_REVIEW, SECURITY_ANALYSIS, agent_task_for
 
 
 def _require_owned_project(db: Session, project_id: int, current_user: User) -> Project:
@@ -45,16 +52,23 @@ def _require_owned_project(db: Session, project_id: int, current_user: User) -> 
     return project
 
 
-# The agent image's ENTRYPOINT is ["python","-m","agent"] (see agent/Dockerfile),
-# so the snippet runs the IMAGE and appends `--diff <file>` as args. We deliberately
-# do NOT use a Jenkins `agent { docker { image … } }` block: that runs the build's
-# shell steps *inside* the image, which an executable-entrypoint image can't host.
-# Instead: a normal node + an explicit `docker run`. Pinned + drift-tested.
+# The agent images' ENTRYPOINT is ["python","-m","agent"] (see agent/Dockerfile*),
+# so the snippets run the IMAGE and (review only) append `--diff <file>` as args. We
+# deliberately do NOT use a Jenkins `agent { docker { image … } }` block: that runs
+# the build's shell steps *inside* the image, which an executable-entrypoint image
+# can't host. Instead: a normal node + an explicit `docker run`. Pinned + drift-tested.
 AGENT_DIFF_FILE = "pr.diff"
 AGENT_DIFF_ARG = f"--diff {AGENT_DIFF_FILE}"
 # Credential ids the user creates in Jenkins (Secret text).
 CI_TOKEN_CRED_ID = "modelmatch-ci-token"
 MODEL_KEY_CRED_ID = "modelmatch-model-api-key"
+# The security image's read-only workspace + the sandbox flags P38b/P38d proved
+# (no capabilities, no privilege escalation, bounded memory/CPU, a tmpfs /tmp).
+SECURITY_WORKSPACE = "/workspace"
+SECURITY_SANDBOX_FLAGS = (
+    "        --cap-drop ALL --security-opt no-new-privileges \\\n"
+    "        --memory 2g --cpus 2 --tmpfs /tmp:size=256m \\\n"
+)
 
 
 def _provider_wiring(
@@ -94,44 +108,89 @@ def _provider_wiring(
     return env_block, run_flags, ""
 
 
+def _modelmatch_flags(*, api_url: str, project_id: int) -> str:
+    """The `MODELMATCH_*` trio (+ POST_RESULT + BUILD_TAG) the agent needs to fetch its
+    config and post its own run (HLD §3b.1). The token is passed BY NAME — it is bound
+    in `environment {}` from the Jenkins credential and never appears in argv."""
+    return (
+        f"        -e MODELMATCH_API_URL={api_url} \\\n"
+        f"        -e MODELMATCH_PROJECT_ID={project_id} \\\n"
+        "        -e MODELMATCH_CI_TOKEN \\\n"
+        "        -e MODELMATCH_POST_RESULT=true \\\n"
+        "        -e BUILD_TAG \\\n"
+    )
+
+
+def _image_note(image_ref: str) -> str:
+    # Honest about the registry: in this phase the image lives in a private ECR (no
+    # public mirror), so the node must have it (a pull with registry credentials, or
+    # a pre-pulled/retagged copy) before the first build.
+    return (
+        f"# Image: {image_ref}\n"
+        "        # (private registry in this phase — no public mirror. Pull it onto this node\n"
+        "        #  with your registry credentials, or pre-load it, before the first build.)\n        "
+    )
+
+
+# One exit table for both images (HLD §3b.1); only 0 is a pass. A refusal (3) returns
+# no findings, so it must never read as clean — the stage says so in its own words.
+def _exit_case(*, pass_msg: str, fail_msg: str, nothing_verb: str) -> str:
+    return f"""        case "$AGENT_RC" in
+          0)   echo "ModelMatch: {pass_msg}" ;;
+          1)   echo "ModelMatch: {fail_msg} — failing the stage." ;;
+          2)   echo "ModelMatch: unparseable model output — NOT a pass." ;;
+          3)   echo "ModelMatch: the model REFUSED. Nothing was {nothing_verb}. NOT a pass." ;;
+          4)   echo "ModelMatch: config / credential / API error (see above) — NOT a pass." ;;
+          124) echo "ModelMatch: a run ceiling aborted the agent — NOT a pass." ;;
+          *)   echo "ModelMatch: unexpected agent exit $AGENT_RC — treating as failure." ;;
+        esac
+        exit $AGENT_RC"""
+
+
 def build_review_snippet(
     *,
-    ci_runs_url: str,
+    api_url: str,
+    project_id: int,
     image_ref: str,
-    llm_client: str,
-    model: str,
     max_tokens: int,
     token_ceiling: int,
     aws_region: str,
-    auth_mode: str | None = None,
+    auth_mode: str,
     credential_env_var: str | None = None,
 ) -> str:
-    """A Jenkins declarative stage that runs the agent IMAGE on the PR diff and POSTs
-    results back. Runs on a normal node (needs docker, git, jq, curl) and invokes the
-    image via `docker run … <image> --diff pr.diff` — the image entrypoint is
-    `python -m agent`. Provider config (LLM_CLIENT / AGENT_MODEL / cost caps) is set
-    explicitly so the agent never silently runs the fake client.
+    """A Jenkins declarative stage that runs the REVIEW image on the PR diff. Runs on
+    a normal node (needs docker + git) and invokes the image via `docker run …
+    <image> --diff pr.diff` — the image entrypoint is `python -m agent`.
 
-    Secret hygiene: neither the BYOK key nor the CI token is expanded into a command's
-    argv. The key is passed to docker BY NAME (`-e VAR`); the CI token is written to a
-    0600 curl config file (via a heredoc, so it isn't even a printf argument) and
-    consumed with `--config`. The diff is PR-safe: `CHANGE_TARGET` (set on multibranch
-    PR builds) with a documented fall back to `main`.
+    Fetch-config shape (E20): the agent gets its task / model / review preferences
+    from `GET /projects/{id}/agent-config` with the CI token and POSTs `/ci-runs`
+    itself (`MODELMATCH_POST_RESULT=true`, `BUILD_TAG` as the build id) — so the
+    stage carries no provider/model lines and no jq+curl block, and preferences
+    change in the app without editing the pipeline. Exactly ONE poster per stage:
+    the agent posts, the stage never curls (a second POST would be a 409).
 
-    The agent exits non-zero when the gate FAILS, so we capture the exit code, POST
-    the result regardless (the backend keeps the audit record), then propagate the
-    gate as the build status — review + gate stay in CI, ingest still happens.
+    Secret hygiene: neither the BYOK key nor the CI token is expanded into a
+    command's argv — both are bound in `environment {}` and passed to docker BY
+    NAME (`-e VAR`). The diff is PR-safe: `CHANGE_TARGET` (set on multibranch PR
+    builds) with a documented fall back to `main`. The agent exits non-zero when the
+    gate FAILS; the stage propagates that as the build status.
     """
     env_block, cred_flags, note = _provider_wiring(
-        auth_mode=auth_mode or ("aws_iam" if llm_client == "bedrock" else "api_key"),
-        credential_env_var=credential_env_var,
-        aws_region=aws_region,
+        auth_mode=auth_mode, credential_env_var=credential_env_var, aws_region=aws_region
     )
-    return f"""// Runs on a normal Jenkins node (needs: docker, git, jq, curl).
+    mm_flags = _modelmatch_flags(api_url=api_url, project_id=project_id)
+    exit_case = _exit_case(
+        pass_msg="review passed — no blocking findings.",
+        fail_msg="the review found a blocking (high/critical) issue",
+        nothing_verb="reviewed",
+    )
+    return f"""// Runs on a normal Jenkins node (needs: docker, git). The agent fetches this
+// project's task, model and review preferences from ModelMatch at run time and posts
+// the run itself — change them in the app, not here.
 stage('ModelMatch AI Review') {{
   agent any
   environment {{
-    // The per-project ingest token (shown once by /ci-setup) — add as 'Secret text' '{CI_TOKEN_CRED_ID}'.
+    // The per-project CI token (shown once by /ci-setup) — add as 'Secret text' '{CI_TOKEN_CRED_ID}'.
     MODELMATCH_CI_TOKEN = credentials('{CI_TOKEN_CRED_ID}')
 {env_block}  }}
   steps {{
@@ -141,26 +200,66 @@ stage('ModelMatch AI Review') {{
         TARGET="${{CHANGE_TARGET:-main}}"
         git fetch --no-tags origin "$TARGET"
         git diff "origin/${{TARGET}}...HEAD" > {AGENT_DIFF_FILE}
-        {note}set +e
+        {_image_note(image_ref)}{note}set +e
         docker run --rm -v "$PWD:/work" -w /work \\
-        -e LLM_CLIENT={llm_client} \\
-        -e AGENT_MODEL={model} \\
-        -e AGENT_MAX_TOKENS={max_tokens} \\
+{mm_flags}        -e AGENT_MAX_TOKENS={max_tokens} \\
         -e AGENT_TOKEN_CEILING={token_ceiling} \\
-{cred_flags}        {image_ref} {AGENT_DIFF_ARG} > result.json
+{cred_flags}        {image_ref} {AGENT_DIFF_ARG}
         AGENT_RC=$?
         set -e
-        jq --arg b "$BUILD_TAG" '. + {{jenkinsBuildId: $b}}' result.json > payload.json
-        # Keep the CI token out of any command's argv: write it to a 0600 curl config.
-        CURL_CFG="$(mktemp)"
-        trap 'rm -f "$CURL_CFG"' EXIT
-        cat > "$CURL_CFG" <<CFGEOF
-header = "X-CI-Token: $MODELMATCH_CI_TOKEN"
-CFGEOF
-        curl -fsS --config "$CURL_CFG" -X POST "{ci_runs_url}" \\
-          -H "Content-Type: application/json" \\
-          --data @payload.json
-        exit $AGENT_RC
+{exit_case}
+    '''
+  }}
+}}"""
+
+
+def build_security_snippet(
+    *,
+    api_url: str,
+    project_id: int,
+    image_ref: str,
+    aws_region: str,
+    auth_mode: str,
+    credential_env_var: str | None = None,
+) -> str:
+    """A Jenkins declarative stage that runs the SECURITY image over the whole
+    checkout (E20). The workspace is mounted READ-ONLY at `/workspace` (the agent
+    never writes to the checkout), under the sandbox flags the P38b spike proved, and
+    the image takes NO args: it fetches its config from the API, runs the OpenCode
+    loop, and POSTs the run (with per-finding CWEs + cache-read tokens) itself.
+
+    Ceilings are the image's own security-task defaults (a scan reads a whole repo;
+    the review caps would abort it) — env overrides stay possible in Jenkins. Exit
+    `1` (a critical finding) fails the stage: that is the demo beat, and only `0` is
+    a pass.
+    """
+    env_block, cred_flags, note = _provider_wiring(
+        auth_mode=auth_mode, credential_env_var=credential_env_var, aws_region=aws_region
+    )
+    mm_flags = _modelmatch_flags(api_url=api_url, project_id=project_id)
+    exit_case = _exit_case(
+        pass_msg="scan completed — no critical findings.",
+        fail_msg="CRITICAL vulnerability found",
+        nothing_verb="scanned",
+    )
+    return f"""// Runs on a normal Jenkins node (needs: docker). The agent audits the whole checkout
+// READ-ONLY with the model ModelMatch configured for this project, posts the run itself
+// and fails the stage on a critical finding.
+stage('ModelMatch Security Analysis') {{
+  agent any
+  environment {{
+    // The per-project CI token (shown once by /ci-setup) — add as 'Secret text' '{CI_TOKEN_CRED_ID}'.
+    MODELMATCH_CI_TOKEN = credentials('{CI_TOKEN_CRED_ID}')
+{env_block}  }}
+  steps {{
+    sh '''
+        set -e
+        {_image_note(image_ref)}{note}set +e
+        docker run --rm -v "$PWD:{SECURITY_WORKSPACE}:ro" \\
+{SECURITY_SANDBOX_FLAGS}{mm_flags}{cred_flags}        {image_ref}
+        AGENT_RC=$?
+        set -e
+{exit_case}
     '''
   }}
 }}"""
@@ -189,26 +288,51 @@ def _selected_runtime_config(db: Session, project: Project):
     return require_enabled_runtime_config(db, option.model_id, option.model.name)
 
 
-def _setup_out(project: Project, token_plain: str | None, db: Session) -> CiSetupOut:
-    """Build the snippet + ingest URL (the stable parts); `token_plain` is non-None
-    only when a token was just minted/rotated (never re-shown otherwise)."""
+def agent_image_for(task_type: str) -> str:
+    """The image the snippet runs for a task (P38d split: review vs security)."""
     settings = get_settings()
-    runtime = _selected_runtime_config(db, project)
-    ci_runs_url = f"{settings.public_base_url}/projects/{project.id}/ci-runs"
-    snippet = build_review_snippet(
-        ci_runs_url=ci_runs_url,
-        image_ref=settings.agent_image,
-        llm_client=runtime.provider,
-        model=runtime.provider_model_id,
+    if task_type == SECURITY_ANALYSIS:
+        return settings.agent_security_image
+    return settings.agent_image
+
+
+def build_snippet(project: Project, runtime, *, api_url: str) -> str:
+    """Per-task dispatcher: the review stage (diff → one call) or the security
+    stage (read-only checkout → agentic scan). Both fetch-config, both agent-posts."""
+    settings = get_settings()
+    image_ref = agent_image_for(project.task_type)
+    if project.task_type == SECURITY_ANALYSIS:
+        return build_security_snippet(
+            api_url=api_url,
+            project_id=project.id,
+            image_ref=image_ref,
+            aws_region=settings.aws_region,
+            auth_mode=runtime.auth_mode,
+            credential_env_var=runtime.credential_env_var,
+        )
+    return build_review_snippet(
+        api_url=api_url,
+        project_id=project.id,
+        image_ref=image_ref,
         max_tokens=settings.ci_agent_max_tokens,
         token_ceiling=settings.ci_agent_token_ceiling,
         aws_region=settings.aws_region,
         auth_mode=runtime.auth_mode,
         credential_env_var=runtime.credential_env_var,
     )
-    return CiSetupOut(
-        snippet=snippet,
-        image_ref=settings.agent_image,
+
+
+def _setup_out(project: Project, token_plain: str | None, db: Session) -> CiSetupOut:
+    """Build the snippet + ingest URL (the stable parts); `token_plain` is non-None
+    only when a token was just minted/rotated (never re-shown otherwise)."""
+    settings = get_settings()
+    runtime = _selected_runtime_config(db, project)
+    api_url = settings.public_base_url.rstrip("/")
+    ci_runs_url = f"{api_url}/projects/{project.id}/ci-runs"
+    return CiSetupOut.for_task(
+        project.task_type,
+        snippet=build_snippet(project, runtime, api_url=api_url),
+        image_ref=agent_image_for(project.task_type),
         ci_runs_url=ci_runs_url,
         token=token_plain,
     )
@@ -243,6 +367,30 @@ def rotate_ci_token(db: Session, project_id: int, current_user: User) -> CiSetup
     return _setup_out(project, token_plain, db)
 
 
+def agent_config(db: Session, project: Project) -> AgentConfigOut:
+    """HLD §3b.1: the agent's run-time configuration for a project, under the CI
+    token (the caller resolved `project` through `require_project_token`, so an
+    unknown project is already a 404 and a bad token a 401). The selected option's
+    runtime-config row is served verbatim — a bare provider model id and the NAME of
+    the credential variable (never a value). Review preferences travel for the review
+    task only; a security project gets `null` whatever is stored."""
+    runtime = _selected_runtime_config(db, project)
+    task_type = project.task_type
+    return AgentConfigOut(
+        project_id=project.id,
+        task=agent_task_for(task_type),
+        task_type=task_type,
+        model=AgentConfigModel(
+            name=runtime.model.name,
+            provider=runtime.provider,
+            provider_model_id=runtime.provider_model_id,
+            auth_mode=runtime.auth_mode,
+            credential_env_var=runtime.credential_env_var,
+        ),
+        review_preferences=project.review_preferences if task_type == CI_REVIEW else None,
+    )
+
+
 def _resolve_model_id(db: Session, project: Project) -> int | None:
     """The model this run is configured (BYOK) to use = the project's selected
     option's model — a priced catalog row (S12 savings join). The agent reports a
@@ -272,6 +420,7 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
     # vs the project's BASELINE model, both already concrete ids — using each model's
     # split input/output prices. Deterministic, no LLM, zero tokens. An unpriced model
     # leaves the trio NULL (compute_savings returns None) without failing the ingest.
+    # cache_read_tokens is deliberately NOT in this call (HLD §8).
     selected_model_id = _resolve_model_id(db, project)
     actual_cost, baseline_cost, savings = compute_savings(
         payload.tokens_in,
@@ -284,9 +433,10 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
         project_id=project.id,
         jenkins_build_id=payload.jenkins_build_id,
         model_id=selected_model_id,
-        task="code_review",
+        task=project.task_type,  # the run records the project's task (one vocabulary)
         tokens_in=payload.tokens_in,
         tokens_out=payload.tokens_out,
+        cache_read_tokens=payload.cache_read_tokens,
         actual_cost=actual_cost,
         baseline_cost=baseline_cost,
         savings=savings,
@@ -306,6 +456,7 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
                 file=f.file,
                 line=f.line,
                 message=f.message,
+                cwe=f.cwe,
             )
         )
     db.commit()
@@ -334,6 +485,7 @@ def ingest_run(db: Session, project: Project, payload: CiRunIngest) -> CiRunOut:
         task=run.task,
         tokens_in=run.tokens_in,
         tokens_out=run.tokens_out,
+        cache_read_tokens=run.cache_read_tokens,
         actual_cost=run.actual_cost,
         baseline_cost=run.baseline_cost,
         savings=run.savings,

@@ -171,11 +171,13 @@ def test_generate_sql_strips_echoed_label():
 # ===========================================================================
 
 def _savings(*, runs_count=3, cumulative="0.0080", spend="0.0020", status="banking",
-             rate=1.0, quality_risk="0", saved_pct=80.0):
+             rate=1.0, quality_risk="0", saved_pct=80.0, task_type="ci_review",
+             selected_model="Claude Haiku 4.5", baseline_model="Claude Sonnet 4.5"):
     return SavingsResponse(
         range="all",
-        selected_model="Claude Haiku 4.5",
-        baseline_model="Claude Sonnet 4.5",
+        selected_model=selected_model,
+        baseline_model=baseline_model,
+        task_type=task_type,
         kpis=SavingsKpis(
             cumulative_saved=Decimal(cumulative),
             saved_pct=saved_pct,
@@ -216,6 +218,36 @@ def test_savings_snapshot_marks_figures_authoritative():
     snap = opener.format_savings_snapshot(_savings())
     assert "authoritative" in snap.lower()
     assert "$0.0080" in snap and "Claude Haiku 4.5" in snap
+
+
+# --- E20: the grounding names the project's task -----------------------------------
+
+def test_snapshot_and_opener_name_the_review_task():
+    snap = opener.format_savings_snapshot(_savings())
+    assert "Task: PR code review (ci_review)" in snap
+    assert "PR diff" in snap
+    op = opener.build_opener(_savings())
+    assert "PR code review (ci_review)" in op
+    assert "reviewed your PR diffs" in op
+    assert "vulnerabilit" not in op.lower()
+
+
+def test_snapshot_and_opener_name_the_security_task():
+    sav = _savings(task_type="security_analysis", selected_model="DeepSeek V4 Flash",
+                   baseline_model="Claude Opus 5")
+    snap = opener.format_savings_snapshot(sav)
+    assert "Task: security analysis (security_analysis)" in snap
+    assert "CWE" in snap and "critical" in snap
+    op = opener.build_opener(sav)
+    assert "security analysis (security_analysis)" in op
+    assert "DeepSeek V4 Flash" in op and "Claude Opus 5" in op
+    assert "scanned your repository for vulnerabilities" in op
+    assert "PR diff" not in op  # never describes a scan as a diff review
+
+
+def test_opener_without_a_task_still_reads(client=None):
+    op = opener.build_opener(_savings(task_type=None))
+    assert "CI code review" in op
 
 
 # ===========================================================================

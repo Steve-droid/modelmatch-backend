@@ -5,6 +5,7 @@ Richer shapes (recommendation request/response, savings aggregates, chat) arrive
 with their own slices.
 """
 
+from app.schemas.agent_config import AgentConfigModel, AgentConfigOut
 from app.schemas.auth import LoginRequest, TokenOut, UserCreate, UserOut
 from app.schemas.base import CamelModel
 from app.schemas.catalog import (
@@ -32,6 +33,8 @@ from app.schemas.recommend import (
 
 __all__ = [
     "CamelModel",
+    "AgentConfigModel",
+    "AgentConfigOut",
     "UserCreate",
     "UserOut",
     "LoginRequest",

@@ -244,6 +244,21 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200))
     selected_option_id: Mapped[Optional[int]] = mapped_column(ForeignKey("recommendation_option.id"))
     baseline_model_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model.id"))
+    # E20 (P38e): the ONE task this project's agent runs — the catalog vocabulary
+    # (`ci_review` | `security_analysis`, see app.tasks). Set at create from the pick,
+    # validated against the selected option's recommendation; served to the agent as
+    # `task` by GET /projects/{id}/agent-config.
+    task_type: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        server_default="ci_review",
+        comment="the task this project's agent runs: ci_review | security_analysis",
+    )
+    # Review task only: bounded free text (≤ 2000 chars, app.tasks) the review agent
+    # appends to its system prompt. NULL / ignored for security projects.
+    review_preferences: Mapped[Optional[str]] = mapped_column(
+        Text, comment="review task only: bounded text appended to the agent's prompt"
+    )
 
     user: Mapped[User] = relationship()
 
@@ -291,9 +306,17 @@ class CiRun(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("project.id", ondelete="CASCADE"))
     jenkins_build_id: Mapped[Optional[str]] = mapped_column(String(255))
     model_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model.id"))
-    task: Mapped[str] = mapped_column(String(32), server_default="code_review")
+    # The task the run performed — the project's task_type at ingest (one vocabulary
+    # with the catalog + project; the legacy S11 literal `code_review` was migrated).
+    task: Mapped[str] = mapped_column(String(32), server_default="ci_review")
     tokens_in: Mapped[Optional[int]] = mapped_column(Integer)
     tokens_out: Mapped[Optional[int]] = mapped_column(Integer)
+    # The agentic loop's cache-read tokens (security task). Stored for the record —
+    # NOT part of the savings math (HLD §8: tokens × catalog price on both sides).
+    cache_read_tokens: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        comment="agentic-loop cache-read tokens — stored for the record, never priced",
+    )
     actual_cost: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     baseline_cost: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
     savings: Mapped[Optional[Decimal]] = mapped_column(_MONEY)
@@ -327,6 +350,10 @@ class CiFinding(Base):
     file: Mapped[Optional[str]] = mapped_column(String(1024))
     line: Mapped[Optional[int]] = mapped_column(Integer)
     message: Mapped[Optional[str]] = mapped_column(Text)
+    # Security task: the finding's CWE ("CWE-89: SQL Injection"); NULL on review findings.
+    cwe: Mapped[Optional[str]] = mapped_column(
+        String(200), comment="security task: CWE id + title"
+    )
 
     ci_run: Mapped[CiRun] = relationship()
 
