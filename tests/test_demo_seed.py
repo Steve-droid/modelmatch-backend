@@ -247,3 +247,68 @@ def test_security_findings_carry_cwe_identifiers(db_session):
     assert all(f.category == "security" for f in findings)
     assert all("CWE-" in f.message for f in findings)
     assert any(f.severity == "critical" for f in findings)
+
+
+# --- E20: task + preferences on the demo projects, cwe on the security findings ---
+
+def test_demo_projects_state_their_task_and_the_review_demo_has_preferences(db_session):
+    from app.demo.seed import _DEMO_REVIEW_PREFERENCES, seed_demo_data, seed_security_demo_data
+
+    load_seed(db_session)
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+
+    by_name = {p.name: p for p in db_session.scalars(select(Project)).all()}
+    assert by_name["demo-api"].task_type == "ci_review"
+    assert by_name["demo-api"].review_preferences == _DEMO_REVIEW_PREFERENCES
+    assert by_name["demo-sec"].task_type == "security_analysis"
+    assert by_name["demo-sec"].review_preferences is None
+    # the review runs record the catalog vocabulary too (no legacy `code_review`)
+    assert {r.task for r in db_session.scalars(
+        select(CiRun).where(CiRun.project_id == by_name["demo-api"].id)
+    ).all()} == {"ci_review"}
+
+
+def test_demo_seed_backfills_task_and_preferences_on_a_pre_e20_project(db_session):
+    """The live demo projects predate the column: a re-fired seed sets the task and
+    gives the review demo its preferences ONLY when none are set — a user's edit
+    survives the next sync."""
+    from app.demo.seed import _DEMO_REVIEW_PREFERENCES, seed_demo_data, seed_security_demo_data
+
+    load_seed(db_session)
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+    by_name = {p.name: p for p in db_session.scalars(select(Project)).all()}
+    # simulate the pre-E20 live rows: migration default + no preferences / a user edit
+    by_name["demo-sec"].task_type = "ci_review"
+    by_name["demo-api"].review_preferences = "my own rules"
+    db_session.commit()
+
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+    db_session.expire_all()
+    by_name = {p.name: p for p in db_session.scalars(select(Project)).all()}
+    assert by_name["demo-sec"].task_type == "security_analysis"
+    assert by_name["demo-api"].review_preferences == "my own rules"  # not overwritten
+    assert _DEMO_REVIEW_PREFERENCES != "my own rules"
+
+
+def test_security_findings_carry_the_cwe_column(db_session):
+    """The runs table shows CWEs from the column (not by parsing the message)."""
+    from app.demo.seed import seed_demo_data, seed_security_demo_data
+    from app.models import CiFinding
+
+    load_seed(db_session)
+    seed_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-api", run_count=30)
+    seed_security_demo_data(db_session, email=_EMAIL, password=_PASSWORD, project_name="demo-sec", run_count=20)
+    by_name = {p.name: p for p in db_session.scalars(select(Project)).all()}
+
+    sec = db_session.scalars(
+        select(CiFinding).join(CiRun).where(CiRun.project_id == by_name["demo-sec"].id)
+    ).all()
+    assert sec and all(f.cwe and f.cwe.startswith("CWE-") for f in sec)
+    assert all(f.message.startswith(f.cwe.split(":")[0]) for f in sec)  # message agrees
+    rev = db_session.scalars(
+        select(CiFinding).join(CiRun).where(CiRun.project_id == by_name["demo-api"].id)
+    ).all()
+    assert rev and all(f.cwe is None for f in rev)

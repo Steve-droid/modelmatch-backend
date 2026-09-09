@@ -18,7 +18,12 @@ import agent.__main__ as agent_cli
 from agent.config import AgentConfig
 from agent.review import review
 from app.catalog.seed import load_seed
-from app.ci.service import AGENT_DIFF_ARG, build_review_snippet
+from app.ci.service import (
+    AGENT_DIFF_ARG,
+    SECURITY_WORKSPACE,
+    build_review_snippet,
+    build_security_snippet,
+)
 from app.ci.tokens import hash_token
 from app.llm.fake import FakeLLMClient
 from app.models import (
@@ -30,7 +35,8 @@ from app.models import (
     RecommendationOption,
     User,
 )
-from app.schemas.ci import MAX_FINDINGS, MAX_MESSAGE_LEN, MAX_TOKENS
+from app.schemas.ci import MAX_CWE_LEN, MAX_FINDINGS, MAX_MESSAGE_LEN, MAX_TOKENS
+from app.tasks import CI_REVIEW, SECURITY_ANALYSIS
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -160,7 +166,9 @@ def test_ci_setup_returns_snippet_and_mints_token_once(client, db_session):
     assert body["token"]  # plaintext returned on the first fetch
     assert body["ciRunsUrl"].endswith(f"/projects/{pid}/ci-runs")
     assert body["imageRef"] in body["snippet"]
-    assert "X-CI-Token" in body["snippet"]
+    # the CI token is bound from the Jenkins credential and passed to the agent by NAME
+    assert "MODELMATCH_CI_TOKEN = credentials('modelmatch-ci-token')" in body["snippet"]
+    assert body["taskType"] == CI_REVIEW and body["task"] == "review"
 
     # Mint-once: a second fetch returns the snippet but NO plaintext token.
     second = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()
@@ -308,7 +316,8 @@ def test_ingest_persists_run_and_findings(client, db_session):
 
     run = db_session.scalar(select(CiRun).where(CiRun.project_id == pid))
     assert run is not None
-    assert run.task == "code_review"
+    assert run.task == CI_REVIEW  # the run records the project's task (one vocabulary)
+    assert run.cache_read_tokens is None  # a v1 agent never sends it
     assert run.gate == "pass"  # audit trail persisted
     # S12 now fills the savings trio at ingest (see test_savings.py for the math);
     # quality_ok (S13, acceptance-rate gate) stays untouched on insert.
@@ -392,6 +401,30 @@ def test_ingest_duplicate_build_id_is_409(client, db_session):
 
 # --- snippet / CLI drift guard -------------------------------------------
 
+_SECURITY_SANDBOX = (
+    "--cap-drop ALL --security-opt no-new-privileges",
+    "--memory 2g --cpus 2 --tmpfs /tmp:size=256m",
+)
+
+
+def _make_security_project(client, headers) -> int:
+    body = client.post(
+        "/recommendations",
+        json={"taskTypes": [SECURITY_ANALYSIS], "budgetSensitivity": "high"},
+        headers=headers,
+    ).json()
+    return client.post(
+        "/projects",
+        json={
+            "name": "sec",
+            "selectedOptionId": body["shortlist"][0]["recommendationOptionId"],
+            "baselineModelId": body["baseline"]["modelId"],
+            "taskType": SECURITY_ANALYSIS,
+        },
+        headers=headers,
+    ).json()["id"]
+
+
 def test_snippet_runs_image_via_docker_run_not_docker_agent(client, db_session, tmp_path, monkeypatch):
     """The snippet must invoke the image with `docker run … --diff pr.diff`, NOT a
     Jenkins `agent { docker { image } }` block (the image has an executable entrypoint
@@ -406,6 +439,7 @@ def test_snippet_runs_image_via_docker_run_not_docker_agent(client, db_session, 
     assert "agent { docker" not in snippet  # NOT a docker-agent block
     assert "agent any" in snippet           # a normal node
     assert AGENT_DIFF_ARG in snippet        # `--diff pr.diff` appended to the image
+    assert '-v "$PWD:/work" -w /work' in snippet  # the review image reads the diff here
 
     # The image entrypoint is python -m agent, so those appended args reach the CLI.
     dockerfile = (ROOT / "agent" / "Dockerfile").read_text()
@@ -420,64 +454,60 @@ def test_snippet_runs_image_via_docker_run_not_docker_agent(client, db_session, 
         agent_cli.main(["review", "--diff", str(diff_file)])
 
 
-def test_snippet_wires_real_provider_and_never_runs_fake(client, db_session):
-    """The snippet must set explicit provider config (LLM_CLIENT/AGENT_MODEL/caps) +
-    a BYOK key credential — and must NOT silently run the fake client."""
+def test_snippet_is_fetch_config_and_the_agent_posts_the_run(client, db_session):
+    """E20 (HLD §3b.1): the stage sets the MODELMATCH_* trio + POST_RESULT + BUILD_TAG
+    so the agent fetches task/model/preferences from the API and POSTs /ci-runs
+    itself. Consequently the stage carries NO provider/model lines (they live in the
+    runtime-config row, served by agent-config) and NEVER curls (one poster per stage
+    — a second POST is a 409)."""
     load_seed(db_session)
-    headers, _ = _register(client, db_session, "ci_prov@example.com")
+    headers, _ = _register(client, db_session, "ci_fetch@example.com")
+    pid = _make_project(client, headers)
+    _connect_jenkins(client, headers, pid)
+    body = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()
+    snippet = body["snippet"]
+
+    api_url = body["ciRunsUrl"].removesuffix(f"/projects/{pid}/ci-runs")
+    assert f"-e MODELMATCH_API_URL={api_url} \\" in snippet
+    assert f"-e MODELMATCH_PROJECT_ID={pid} \\" in snippet
+    assert "-e MODELMATCH_CI_TOKEN \\" in snippet         # by NAME, no value in argv
+    assert "-e MODELMATCH_POST_RESULT=true \\" in snippet
+    assert "-e BUILD_TAG \\" in snippet                   # the run's jenkinsBuildId
+    assert "MODELMATCH_CI_TOKEN=$" not in snippet and 'MODELMATCH_CI_TOKEN="$' not in snippet
+
+    # no v1 provider wiring, no fake client, no second poster
+    for gone in ("LLM_CLIENT=", "AGENT_MODEL=", "curl", "jq ", "X-CI-Token", "result.json", "payload.json"):
+        assert gone not in snippet, gone
+    # the review caps still ride along (they are ceilings, never the model)
+    assert "-e AGENT_MAX_TOKENS=" in snippet and "-e AGENT_TOKEN_CEILING=" in snippet
+    # the exit table: only 0 is a pass, and a refusal (3) is named as NOT a pass
+    assert 'case "$AGENT_RC" in' in snippet
+    assert "REFUSED" in snippet and "exit $AGENT_RC" in snippet
+
+
+def test_ci_setup_api_key_credential_binding_follows_the_runtime_config(client, db_session):
+    """The BYOK key is bound to whatever env var the selected model's runtime-config
+    row declares — rewrite the row and the binding follows (not a vendor guess)."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_runtime_cfg@example.com")
     pid = _make_project(client, headers)
     _set_project_runtime_config(
-        db_session,
-        pid,
-        provider="anthropic",
-        provider_model_id="claude-haiku-4-5",
-        auth_mode="api_key",
-        credential_env_var="ANTHROPIC_API_KEY",
+        db_session, pid,
+        provider="anthropic", provider_model_id="claude-from-db-runtime",
+        auth_mode="api_key", credential_env_var="ANTHROPIC_API_KEY",
     )
     _connect_jenkins(client, headers, pid)
     snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
-
-    assert "LLM_CLIENT=fake" not in snippet
-    assert "LLM_CLIENT=anthropic" in snippet       # the configured demo default
-    for knob in ("AGENT_MODEL=", "AGENT_MAX_TOKENS=", "AGENT_TOKEN_CEILING="):
-        assert knob in snippet
-    # BYOK key: bound to the SDK env var via a Jenkins credential, passed to docker
-    # BY NAME (no value) — the secret must never be expanded into the command argv.
     assert "ANTHROPIC_API_KEY = credentials('modelmatch-model-api-key')" in snippet
     assert "-e ANTHROPIC_API_KEY \\" in snippet
     assert 'ANTHROPIC_API_KEY="$' not in snippet        # no value expansion in argv
     assert "$MODELMATCH_MODEL_API_KEY" not in snippet
-
-
-def test_ci_setup_uses_selected_model_runtime_config_not_global_fallback(
-    client, db_session, monkeypatch
-):
-    load_seed(db_session)
-    headers, _ = _register(client, db_session, "ci_runtime_db@example.com")
-    pid = _make_project(client, headers)
-    _set_project_runtime_config(
-        db_session,
-        pid,
-        provider="anthropic",
-        provider_model_id="claude-from-db-runtime",
-        auth_mode="api_key",
-        credential_env_var="ANTHROPIC_API_KEY",
-    )
-    _connect_jenkins(client, headers, pid)
-    monkeypatch.setenv("CI_AGENT_LLM_CLIENT", "gemini")
-    monkeypatch.setenv("CI_AGENT_MODEL", "gemini-global-fallback")
-
-    snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
-
-    assert "LLM_CLIENT=anthropic" in snippet
-    assert "AGENT_MODEL=claude-from-db-runtime" in snippet
-    assert "LLM_CLIENT=gemini" not in snippet
-    assert "gemini-global-fallback" not in snippet
+    assert "GOOGLE_API_KEY" not in snippet and "GEMINI_API_KEY" not in snippet
 
 
 def test_ci_setup_bedrock_runtime_config_uses_nova_without_byok_key(client, db_session):
     load_seed(db_session)
-    headers, _ = _register(client, db_session, "ci_runtime_bedrock@example.com")
+    headers, _ = _register(client, db_session, "ci_bedrock_runtime@example.com")
     pid = _make_project(client, headers)
     _set_project_runtime_config(
         db_session,
@@ -488,13 +518,11 @@ def test_ci_setup_bedrock_runtime_config_uses_nova_without_byok_key(client, db_s
         credential_env_var=None,
     )
     _connect_jenkins(client, headers, pid)
-
     snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
 
-    assert "LLM_CLIENT=bedrock" in snippet
-    assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
     assert "AWS_DEFAULT_REGION=" in snippet
     assert "AWS_REGION=" in snippet
+    assert '-v "$HOME/.aws:/home/appuser/.aws:ro"' in snippet
     assert "modelmatch-model-api-key" not in snippet
     assert "ANTHROPIC_API_KEY" not in snippet
     assert "GEMINI_API_KEY" not in snippet
@@ -502,22 +530,17 @@ def test_ci_setup_bedrock_runtime_config_uses_nova_without_byok_key(client, db_s
 
 
 @pytest.mark.parametrize(
-    "provider,provider_model_id,credential_env_var,absent_env",
+    "provider, provider_model_id, credential_env_var, absent_env",
     [
-        ("anthropic", "claude-runtime-from-db", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"),
-        ("gemini", "gemini-runtime-from-db", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"),
+        ("anthropic", "claude-haiku-4-5", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"),
+        ("gemini", "gemini-2.5-flash", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"),
     ],
 )
 def test_ci_setup_api_key_runtime_configs_bind_provider_env_by_name(
-    client,
-    db_session,
-    provider,
-    provider_model_id,
-    credential_env_var,
-    absent_env,
+    client, db_session, provider, provider_model_id, credential_env_var, absent_env
 ):
     load_seed(db_session)
-    headers, _ = _register(client, db_session, f"ci_runtime_{provider}@example.com")
+    headers, _ = _register(client, db_session, f"ci_{provider}_runtime@example.com")
     pid = _make_project(client, headers)
     _set_project_runtime_config(
         db_session,
@@ -528,11 +551,8 @@ def test_ci_setup_api_key_runtime_configs_bind_provider_env_by_name(
         credential_env_var=credential_env_var,
     )
     _connect_jenkins(client, headers, pid)
-
     snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
 
-    assert f"LLM_CLIENT={provider}" in snippet
-    assert f"AGENT_MODEL={provider_model_id}" in snippet
     assert f"{credential_env_var} = credentials('modelmatch-model-api-key')" in snippet
     assert f"-e {credential_env_var} \\" in snippet
     assert f'{credential_env_var}="$' not in snippet
@@ -542,25 +562,9 @@ def test_ci_setup_api_key_runtime_configs_bind_provider_env_by_name(
         assert "GEMINI_API_KEY" not in snippet
 
 
-def test_snippet_keeps_ci_token_out_of_argv(client, db_session):
-    """The CI token must not be a `-H` argument (visible in ps) — it goes through a
-    curl config file built by a heredoc."""
-    load_seed(db_session)
-    headers, _ = _register(client, db_session, "ci_argv@example.com")
-    pid = _make_project(client, headers)
-    _connect_jenkins(client, headers, pid)
-    snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
-
-    assert '-H "X-CI-Token:' not in snippet              # not in curl argv
-    assert "curl -fsS --config" in snippet               # consumed from a config file
-    assert "mktemp" in snippet and "X-CI-Token: $MODELMATCH_CI_TOKEN" in snippet
-
-
 def test_snippet_diff_is_pr_safe(client, db_session):
-    """The diff must use CHANGE_TARGET (multibranch PR) with a main fallback — not a
-    hardcoded origin/main."""
     load_seed(db_session)
-    headers, _ = _register(client, db_session, "ci_prdiff@example.com")
+    headers, _ = _register(client, db_session, "ci_prsafe@example.com")
     pid = _make_project(client, headers)
     _connect_jenkins(client, headers, pid)
     snippet = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()["snippet"]
@@ -574,21 +578,203 @@ def test_snippet_diff_is_pr_safe(client, db_session):
 def test_bedrock_snippet_uses_aws_creds_not_an_api_key():
     """The Bedrock variant wires AWS creds (region + node role/profile), no API key."""
     snippet = build_review_snippet(
-        ci_runs_url="http://backend/projects/1/ci-runs",
+        api_url="http://backend",
+        project_id=1,
         image_ref="modelmatch-agent:latest",
-        llm_client="bedrock",
-        model="global.amazon.nova-2-lite-v1:0",
         max_tokens=512,
         token_ceiling=4000,
         aws_region="ap-south-1",
+        auth_mode="aws_iam",
     )
-    assert "LLM_CLIENT=bedrock" in snippet and "LLM_CLIENT=fake" not in snippet
-    assert "AGENT_MODEL=global.amazon.nova-2-lite-v1:0" in snippet
     assert "AWS_DEFAULT_REGION=ap-south-1" in snippet
     assert "AWS_REGION=ap-south-1" in snippet
     assert "modelmatch-model-api-key" not in snippet  # no static key credential
     assert "ANTHROPIC_API_KEY" not in snippet
     assert "GEMINI_API_KEY" not in snippet and "GOOGLE_API_KEY" not in snippet
+    assert "-e MODELMATCH_API_URL=http://backend \\" in snippet
+
+
+# --- E20: the security task's snippet + per-task image -----------------------
+
+def test_security_project_gets_the_security_stage(client, db_session, monkeypatch):
+    """A security_analysis project's snippet runs the SECURITY image over a READ-ONLY
+    checkout under the sandbox flags, takes no args (no diff), sets the same
+    MODELMATCH_* trio, binds the runtime row's credential (DeepSeek → DEEPSEEK_API_KEY)
+    and never curls."""
+    monkeypatch.setenv("AGENT_IMAGE", "registry/modelmatch-agent:1.1.0")
+    monkeypatch.setenv("AGENT_SECURITY_IMAGE", "registry/modelmatch-agent-security:1.1.0")
+    from app.config import get_settings
+    get_settings.cache_clear()
+    try:
+        load_seed(db_session)
+        headers, _ = _register(client, db_session, "ci_sec@example.com")
+        pid = _make_security_project(client, headers)
+        _connect_jenkins(client, headers, pid)
+        body = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()
+    finally:
+        get_settings.cache_clear()
+    snippet = body["snippet"]
+
+    assert body["taskType"] == SECURITY_ANALYSIS and body["task"] == "security"
+    assert body["imageRef"] == "registry/modelmatch-agent-security:1.1.0"
+    assert "registry/modelmatch-agent-security:1.1.0\n" in snippet  # the image, no args
+    assert "modelmatch-agent:1.1.0" not in snippet                    # not the review image
+    assert "stage('ModelMatch Security Analysis')" in snippet
+    assert f'-v "$PWD:{SECURITY_WORKSPACE}:ro"' in snippet
+    for flag in _SECURITY_SANDBOX:
+        assert flag in snippet
+    assert AGENT_DIFF_ARG not in snippet and "git diff" not in snippet
+    assert f"-e MODELMATCH_PROJECT_ID={pid} \\" in snippet
+    assert "-e MODELMATCH_CI_TOKEN \\" in snippet
+    assert "-e MODELMATCH_POST_RESULT=true \\" in snippet
+    assert "-e BUILD_TAG \\" in snippet
+    assert "DEEPSEEK_API_KEY = credentials('modelmatch-model-api-key')" in snippet
+    assert "-e DEEPSEEK_API_KEY \\" in snippet
+    # the review caps would abort a whole-repo scan: the image's own defaults apply
+    assert "AGENT_TOKEN_CEILING" not in snippet and "AGENT_MAX_TOKENS" not in snippet
+    for gone in ("curl", "jq ", "X-CI-Token", "LLM_CLIENT=", "AGENT_MODEL="):
+        assert gone not in snippet, gone
+    assert "REFUSED" in snippet and "exit $AGENT_RC" in snippet
+
+
+def test_review_project_uses_the_review_image(client, db_session, monkeypatch):
+    monkeypatch.setenv("AGENT_IMAGE", "registry/modelmatch-agent:1.1.0")
+    monkeypatch.setenv("AGENT_SECURITY_IMAGE", "registry/modelmatch-agent-security:1.1.0")
+    from app.config import get_settings
+    get_settings.cache_clear()
+    try:
+        load_seed(db_session)
+        headers, _ = _register(client, db_session, "ci_rev_img@example.com")
+        pid = _make_project(client, headers)
+        _connect_jenkins(client, headers, pid)
+        body = client.get(f"/projects/{pid}/ci-setup", headers=headers).json()
+    finally:
+        get_settings.cache_clear()
+    assert body["imageRef"] == "registry/modelmatch-agent:1.1.0"
+    assert "registry/modelmatch-agent:1.1.0 --diff pr.diff" in body["snippet"]
+    assert "modelmatch-agent-security" not in body["snippet"]
+    assert "stage('ModelMatch AI Review')" in body["snippet"]
+
+
+def test_security_snippet_bedrock_variant_mounts_aws_profile():
+    snippet = build_security_snippet(
+        api_url="http://backend",
+        project_id=3,
+        image_ref="modelmatch-agent-security:latest",
+        aws_region="ap-south-1",
+        auth_mode="aws_iam",
+    )
+    assert '-v "$PWD:/workspace:ro"' in snippet
+    assert "AWS_DEFAULT_REGION=ap-south-1" in snippet
+    assert '-v "$HOME/.aws:/home/appuser/.aws:ro"' in snippet
+    assert "modelmatch-model-api-key" not in snippet
+
+
+def test_api_key_runtime_config_without_env_var_is_a_config_error():
+    with pytest.raises(ValueError):
+        build_security_snippet(
+            api_url="http://backend", project_id=3, image_ref="x",
+            aws_region="ap-south-1", auth_mode="api_key", credential_env_var=None,
+        )
+
+
+# --- E20: additive ingest fields (cwe, cacheReadTokens) + the run's task ----------
+
+def test_ingest_persists_cwe_and_cache_read_tokens(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "ci_cwe@example.com")
+    pid = _make_security_project(client, headers)
+    token = _mint_token(client, headers, pid)
+
+    body = _agent_result("jenkins-sec-1")
+    body["model"] = "deepseek-v4-flash"
+    body["gate"] = "fail"
+    body["gateReason"] = "1 finding(s) at blocking severity (critical)"
+    body["cacheReadTokens"] = 73_856
+    body["findings"] = [
+        {"severity": "critical", "category": "security", "file": "app.py", "line": 41,
+         "message": "Jinja2 template rendered from user input",
+         "cwe": "CWE-1336: Server-Side Template Injection"},
+        {"severity": "low", "category": "security", "file": "config.py", "line": 3,
+         "message": "hard-coded secret", "cwe": "  CWE-798: Use of Hard-coded Credentials  "},
+        {"severity": "low", "category": "style", "file": "util.py", "line": 9,
+         "message": "no cwe on this one", "cwe": None},
+    ]
+    resp = client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token})
+    assert resp.status_code == 201, resp.text
+    out = resp.json()
+    assert out["task"] == SECURITY_ANALYSIS
+    assert out["cacheReadTokens"] == 73_856
+    assert out["gate"] == "fail"
+
+    run = db_session.scalar(select(CiRun).where(CiRun.project_id == pid))
+    assert run.task == SECURITY_ANALYSIS
+    assert run.cache_read_tokens == 73_856
+    # cache reads are STORED, not priced: the cost is tokens_in/out only
+    assert run.actual_cost is not None and run.tokens_in == 1200
+    cwes = [f.cwe for f in db_session.scalars(
+        select(CiFinding).where(CiFinding.ci_run_id == run.id).order_by(CiFinding.id)
+    ).all()]
+    assert cwes == [
+        "CWE-1336: Server-Side Template Injection",
+        "CWE-798: Use of Hard-coded Credentials",  # trimmed
+        None,
+    ]
+
+    # …and the dashboard shows them: the run row lists the distinct CWE ids, the
+    # drill-in carries the full cwe per finding, the envelope names the task.
+    sav = client.get(f"/projects/{pid}/savings", headers=headers).json()
+    assert sav["taskType"] == SECURITY_ANALYSIS
+    assert sav["runs"][0]["cwes"] == ["CWE-1336", "CWE-798"]
+    assert sav["runs"][0]["gate"] == "fail"
+    drill = client.get(f"/projects/{pid}/runs/{run.id}/findings", headers=headers).json()
+    assert [f["cwe"] for f in drill["findings"]] == [
+        "CWE-1336: Server-Side Template Injection",
+        "CWE-798: Use of Hard-coded Credentials",
+        None,
+    ]
+
+
+def test_ingest_v1_payload_still_validates_and_review_runs_have_no_cwes(client, db_session):
+    """A v1 agent sends neither cwe nor cacheReadTokens — both optional, nothing breaks."""
+    load_seed(db_session)
+    pid, token = _project_with_token(client, db_session, "ci_v1@example.com")
+    body = _agent_result("v1-build")
+    assert "cacheReadTokens" not in body and all("cwe" not in f for f in body["findings"])
+    resp = client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token})
+    assert resp.status_code == 201
+    assert resp.json()["cacheReadTokens"] is None
+    assert resp.json()["task"] == CI_REVIEW
+    run = db_session.scalar(select(CiRun).where(CiRun.project_id == pid))
+    assert all(f.cwe is None for f in db_session.scalars(
+        select(CiFinding).where(CiFinding.ci_run_id == run.id)
+    ).all())
+
+
+def test_ingest_unknown_field_is_still_422(client, db_session):
+    """extra=forbid stays: a raw diff (or any unexpected key) is rejected, even now
+    that two optional keys were added."""
+    load_seed(db_session)
+    pid, token = _project_with_token(client, db_session, "ci_extra@example.com")
+    body = {**_agent_result(), "diff": "diff --git a/x b/x"}
+    assert client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token}).status_code == 422
+    body = {**_agent_result(), "cacheReadTokens": -1}
+    assert client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token}).status_code == 422
+    body = _agent_result()
+    body["findings"][0]["cwe"] = "C" * (MAX_CWE_LEN + 1)
+    assert client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token}).status_code == 422
+
+
+def test_ingest_accepts_multibranch_build_tag_with_percent(client, db_session):
+    """June bug 6: a multibranch BUILD_TAG encodes a branch slash as %2F."""
+    load_seed(db_session)
+    pid, token = _project_with_token(client, db_session, "ci_pct@example.com")
+    body = _agent_result("jenkins-modelmatch-demo-review-feature%2Fx-12")
+    resp = client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token})
+    assert resp.status_code == 201
+    assert resp.json()["jenkinsBuildId"] == "jenkins-modelmatch-demo-review-feature%2Fx-12"
+    body = _agent_result("has space")
+    assert client.post(f"/projects/{pid}/ci-runs", json=body, headers={"X-CI-Token": token}).status_code == 422
 
 
 # --- untrusted-input validation (ABC: LLM output is untrusted) ------------

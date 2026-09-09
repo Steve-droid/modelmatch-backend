@@ -82,6 +82,9 @@ class SavingsRunRow(CamelModel):
     acceptance_rate: Optional[float] = None
     gate: Optional[str] = None
     findings_count: int
+    # E20: the distinct CWE ids on this run's findings ("CWE-89", …), in finding
+    # order — the runs table shows them without a drill-in. Empty on review runs.
+    cwes: list[str] = []
 
 
 class SavingsResponse(CamelModel):
@@ -93,6 +96,8 @@ class SavingsResponse(CamelModel):
     range: SavingsRange
     selected_model: Optional[str] = None   # the recommended model powering "actual"
     baseline_model: Optional[str] = None   # the expensive default "baseline" is costed against
+    # E20: the project's task (catalog vocabulary) — names the task in the UI + chat.
+    task_type: Optional[str] = None
     kpis: SavingsKpis
     series: list[SavingsSeriesPoint]
     runs: list[SavingsRunRow]
@@ -110,6 +115,7 @@ class FindingRow(CamelModel):
     file: Optional[str] = None
     line: Optional[int] = None
     message: Optional[str] = None
+    cwe: Optional[str] = None  # security task: "CWE-89: SQL Injection"; None on review
     verdict: Optional[str] = None  # the caller's accept/reject, or None if not yet rated
 
 

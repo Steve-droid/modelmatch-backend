@@ -45,12 +45,21 @@ from app.recommend.service import recommend
 from app.schemas.jenkins import JenkinsConnectionUpdate
 from app.schemas.project import ProjectCreate
 from app.schemas.recommend import RecommendationRequest
+from app.tasks import CI_REVIEW, SECURITY_ANALYSIS
 
 # The recommendation the demo project is built from: a cost-leaning CI-review pick
 # (high budget sensitivity → cheapest acceptable model, historically Nova 2 Lite) vs
 # the configured baseline (Sonnet). Deterministic — same catalog → same suggestion.
-_DEMO_TASK_TYPES = ["ci_review"]
+_DEMO_TASK_TYPES = [CI_REVIEW]
 _DEMO_BUDGET_SENSITIVITY = "high"
+
+# E20: the review demo's per-project preferences — what the agent appends to its
+# prompt (served by GET /agent-config), so the demo shows the feature without a
+# hand edit. Applied when the project has none yet; never overwrites a user's edit.
+_DEMO_REVIEW_PREFERENCES = (
+    "Flag any use of eval() or exec() as high. Treat request handlers that skip "
+    "input validation as high. Do not report import ordering or docstring style."
+)
 
 # The demo projects' Jenkins connection. A placeholder host on the reserved .invalid
 # TLD — the demo never calls Jenkins (runs are seeded straight into the DB), it just
@@ -69,7 +78,7 @@ _DEMO_JENKINS_JOB_SUFFIX = "main"
 # the product's two tasks side by side — a cheap reviewer on every PR, and an agentic
 # vulnerability scan whose findings gate the build. Cost-leaning on RealVuln picks
 # DeepSeek V4 Flash against the Claude Opus 5 baseline.
-_DEMO_SECURITY_TASK_TYPES = ["security_analysis"]
+_DEMO_SECURITY_TASK_TYPES = [SECURITY_ANALYSIS]
 _DEMO_SECURITY_BUDGET_SENSITIVITY = "high"
 
 # Token volumes differ by an order of magnitude between the two tasks, and the demo
@@ -83,24 +92,26 @@ _REVIEW_TOKENS = (1_100, 650, 290, 200)  # (in_base, in_spread, out_base, out_sp
 _SECURITY_TOKENS = (120_000, 30_000, 3_600, 1_200)
 
 # Security findings carry a CWE — the vocabulary a security scanner reports in, and
-# what the P38d agent will emit from its Semgrep-shaped output.
+# what the P38d agent emits from its Semgrep-shaped output. Tuple shape:
+# (category, severity, file, line, message, cwe) — the cwe is ALSO at the head of the
+# message so a pre-E20 row (no column) still reads right in the drill-in.
 _SECURITY_FINDINGS = [
-    ("security", "critical", "app/api/search.py", 64, "CWE-89: SQL injection — request parameter concatenated into a query"),
-    ("security", "high", "app/auth/session.py", 28, "CWE-798: hard-coded credential used as a signing key"),
-    ("security", "high", "app/api/files.py", 96, "CWE-22: path traversal — user input joined to a filesystem path"),
-    ("security", "medium", "app/templates/profile.html", 12, "CWE-79: reflected cross-site scripting in a rendered field"),
-    ("security", "medium", "app/net/client.py", 41, "CWE-918: server-side request forgery — URL taken from the request"),
-    ("security", "low", "app/crypto/hash.py", 19, "CWE-327: weak hash (MD5) used for a security decision"),
+    ("security", "critical", "app/api/search.py", 64, "CWE-89: SQL injection — request parameter concatenated into a query", "CWE-89: SQL injection"),
+    ("security", "high", "app/auth/session.py", 28, "CWE-798: hard-coded credential used as a signing key", "CWE-798: hard-coded credential"),
+    ("security", "high", "app/api/files.py", 96, "CWE-22: path traversal — user input joined to a filesystem path", "CWE-22: path traversal"),
+    ("security", "medium", "app/templates/profile.html", 12, "CWE-79: reflected cross-site scripting in a rendered field", "CWE-79: cross-site scripting"),
+    ("security", "medium", "app/net/client.py", 41, "CWE-918: server-side request forgery — URL taken from the request", "CWE-918: server-side request forgery"),
+    ("security", "low", "app/crypto/hash.py", 19, "CWE-327: weak hash (MD5) used for a security decision", "CWE-327: broken or risky crypto"),
 ]
 
 _THRESHOLD = Decimal("0.8")  # mirrors QUALITY_THRESHOLD (S13)
-_FINDINGS = [
-    ("security", "high", "app/api/auth.py", 42, "Possible timing-unsafe token compare"),
-    ("style", "low", "app/main.py", 17, "Unused import"),
-    ("security", "medium", "app/db.py", 88, "Connection not closed on error path"),
-    ("style", "low", "app/utils.py", 5, "Function exceeds 50 lines"),
-    ("security", "high", "app/api/ci.py", 120, "User input concatenated into query"),
-    ("style", "medium", "app/recommend/scoring.py", 31, "Magic number; extract constant"),
+_FINDINGS = [  # review findings carry no CWE (the review task is not CWE-tagged)
+    ("security", "high", "app/api/auth.py", 42, "Possible timing-unsafe token compare", None),
+    ("style", "low", "app/main.py", 17, "Unused import", None),
+    ("security", "medium", "app/db.py", 88, "Connection not closed on error path", None),
+    ("style", "low", "app/utils.py", 5, "Function exceeds 50 lines", None),
+    ("security", "high", "app/api/ci.py", 120, "User input concatenated into query", None),
+    ("style", "medium", "app/recommend/scoring.py", 31, "Magic number; extract constant", None),
 ]
 
 
@@ -179,12 +190,15 @@ def _ensure_project(
     *,
     task_types: list[str] | None = None,
     budget_sensitivity: str | None = None,
+    review_preferences: str | None = None,
 ) -> Project:
     """Get-or-create the demo project. On first run, generate a real recommendation
     (persists the options) and build the project from the suggested option + baseline
     via the same create_project service the API uses — so the demo exercises the real
     code path, not a hand-stitched row. Either way the project ends up with a Jenkins
-    connection + CI token (setup complete)."""
+    connection + CI token (setup complete), the task it runs (E20) and, for the review
+    demo, preferences if it has none yet."""
+    task_type = (task_types or _DEMO_TASK_TYPES)[0]
     project = db.scalar(
         select(Project).where(
             Project.name == project_name, Project.user_id == user.id
@@ -205,10 +219,20 @@ def _ensure_project(
                 name=project_name,
                 selected_option_id=result.suggested.recommendation_option_id,
                 baseline_model_id=result.baseline.model_id,
+                task_type=task_type,
+                review_preferences=review_preferences,
             ),
             user,
         )
         project = db.get(Project, out.id)
+    else:
+        # An existing (pre-E20) demo project: state its task, and give the review demo
+        # its preferences ONLY if none are set (a user's edit is never overwritten).
+        if project.task_type != task_type:
+            project.task_type = task_type
+        if review_preferences and project.review_preferences is None:
+            project.review_preferences = review_preferences
+        db.commit()
 
     _ensure_jenkins_setup(db, project, user)
     return project
@@ -220,8 +244,8 @@ def seed_runs(
     count: int,
     *,
     tokens: tuple[int, int, int, int] = _REVIEW_TOKENS,
-    findings: list[tuple[str, str, str, int, str]] | None = None,
-    task: str = "code_review",
+    findings: list[tuple[str, str, str, int, str, str | None]] | None = None,
+    task: str = CI_REVIEW,
 ) -> dict[str, object]:
     """Reset + re-insert this project's CI runs (+ findings + the owner's verdicts).
     Idempotent: drops the project's existing runs first (FK cascade clears findings +
@@ -274,10 +298,10 @@ def seed_runs(
         db.flush()
 
         for i in range(n_find):
-            cat, sev, fpath, line, msg = finding_set[i % len(finding_set)]
+            cat, sev, fpath, line, msg, cwe = finding_set[i % len(finding_set)]
             finding = CiFinding(
                 ci_run_id=run.id, severity=sev, category=cat,
-                file=fpath, line=line, message=msg,
+                file=fpath, line=line, message=msg, cwe=cwe,
             )
             db.add(finding)
             db.flush()
@@ -319,7 +343,9 @@ def seed_demo_data(
     get-or-create (also non-destructive). Pass force=True to re-seed deliberately
     (the local `scripts/seed_demo.py` path)."""
     user = _ensure_user(db, email, password)
-    project = _ensure_project(db, user, project_name)
+    project = _ensure_project(
+        db, user, project_name, review_preferences=_DEMO_REVIEW_PREFERENCES
+    )
 
     existing = db.scalar(
         select(func.count()).select_from(CiRun).where(CiRun.project_id == project.id)
@@ -382,7 +408,7 @@ def seed_security_demo_data(
         run_count,
         tokens=_SECURITY_TOKENS,
         findings=_SECURITY_FINDINGS,
-        task="security_analysis",
+        task=SECURITY_ANALYSIS,
     )
     summary["skipped"] = False
     summary["project"] = project.name

@@ -122,7 +122,11 @@ class Settings(BaseSettings):
     # URL (where the user's Jenkins POSTs results) and the agent image ref to pull.
     # Env-driven, no hardcoding; real values land with the infra/GitOps stories.
     public_base_url: str = "http://localhost:8000"
+    # E20: one image per task (P38d split them for size). The review image runs one
+    # LLM call over the diff; the security image carries OpenCode for the agentic
+    # scan. Both are private-ECR refs in gitops (AGENT_IMAGE / AGENT_SECURITY_IMAGE).
     agent_image: str = "modelmatch-agent:latest"
+    agent_security_image: str = "modelmatch-agent-security:latest"
     aws_region: str = "ap-south-1"  # used by the Bedrock variant of the snippet
 
     # CI runtime caps baked into the generated Jenkins snippet. The provider/model

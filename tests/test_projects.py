@@ -524,3 +524,159 @@ def test_delete_nonexistent_404(client, db_session):
 
 def test_delete_requires_auth_401(client):
     assert client.delete("/projects/1").status_code == 401
+
+
+# --- E20: the project's task + review preferences --------------------------------
+
+def _security_recommendation(client, headers) -> dict:
+    return client.post(
+        "/recommendations",
+        json={"taskTypes": ["security_analysis"], "budgetSensitivity": "high"},
+        headers=headers,
+    ).json()
+
+
+def _recommendation(client, headers) -> dict:
+    return client.post(
+        "/recommendations",
+        json={"taskTypes": ["ci_review"], "budgetSensitivity": "high"},
+        headers=headers,
+    ).json()
+
+
+def _create(client, headers) -> int:
+    return _create_project(client, headers, _make_pick(client, headers))["id"]
+
+
+def test_create_derives_task_type_from_the_option_when_omitted(client, db_session):
+    """An older client sends no taskType: the project takes the task its selected
+    option was ranked on (ci_review here), and has no preferences."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_derive@example.com")
+    rec = _recommendation(client, headers)
+    out = client.post(
+        "/projects",
+        json={
+            "name": "p",
+            "selectedOptionId": rec["shortlist"][0]["recommendationOptionId"],
+            "baselineModelId": rec["baseline"]["modelId"],
+        },
+        headers=headers,
+    ).json()
+    assert out["taskType"] == "ci_review"
+    assert out["reviewPreferences"] is None
+    assert db_session.get(Project, out["id"]).task_type == "ci_review"
+
+
+def test_create_security_project_states_its_task(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_sec@example.com")
+    rec = _security_recommendation(client, headers)
+    resp = client.post(
+        "/projects",
+        json={
+            "name": "sec",
+            "selectedOptionId": rec["shortlist"][0]["recommendationOptionId"],
+            "baselineModelId": rec["baseline"]["modelId"],
+            "taskType": "security_analysis",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["taskType"] == "security_analysis"
+    assert resp.json()["selectedOptionModel"] == "DeepSeek V4 Flash"
+
+
+def test_create_rejects_task_type_that_contradicts_the_option_422(client, db_session):
+    """An option ranked on RealVuln cannot back a review project (and vice versa)."""
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_mismatch@example.com")
+    rec = _security_recommendation(client, headers)
+    resp = client.post(
+        "/projects",
+        json={
+            "name": "p",
+            "selectedOptionId": rec["shortlist"][0]["recommendationOptionId"],
+            "baselineModelId": rec["baseline"]["modelId"],
+            "taskType": "ci_review",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "security_analysis" in resp.json()["detail"]
+
+
+def test_create_rejects_unknown_task_type_422(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_unknown@example.com")
+    rec = _recommendation(client, headers)
+    resp = client.post(
+        "/projects",
+        json={
+            "name": "p",
+            "selectedOptionId": rec["shortlist"][0]["recommendationOptionId"],
+            "baselineModelId": rec["baseline"]["modelId"],
+            "taskType": "agentic_coding",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_create_stores_bounded_review_preferences(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "prefs@example.com")
+    rec = _recommendation(client, headers)
+    base = {
+        "name": "p",
+        "selectedOptionId": rec["shortlist"][0]["recommendationOptionId"],
+        "baselineModelId": rec["baseline"]["modelId"],
+        "taskType": "ci_review",
+    }
+    out = client.post(
+        "/projects",
+        json={**base, "reviewPreferences": "  Flag any use of eval().  "},
+        headers=headers,
+    ).json()
+    assert out["reviewPreferences"] == "Flag any use of eval()."  # trimmed
+    # whitespace-only → none
+    out2 = client.post("/projects", json={**base, "reviewPreferences": "   "}, headers=headers).json()
+    assert out2["reviewPreferences"] is None
+    # over the contract's bound → 422
+    resp = client.post("/projects", json={**base, "reviewPreferences": "x" * 2001}, headers=headers)
+    assert resp.status_code == 422
+
+
+def test_patch_review_preferences_sets_and_clears(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "prefs_patch@example.com")
+    pid = _create(client, headers)
+    out = client.patch(
+        f"/projects/{pid}", json={"reviewPreferences": "Ignore import ordering."}, headers=headers
+    ).json()
+    assert out["reviewPreferences"] == "Ignore import ordering."
+    # a name-only PATCH leaves them alone
+    out = client.patch(f"/projects/{pid}", json={"name": "renamed"}, headers=headers).json()
+    assert out["reviewPreferences"] == "Ignore import ordering."
+    # explicit null clears
+    out = client.patch(f"/projects/{pid}", json={"reviewPreferences": None}, headers=headers).json()
+    assert out["reviewPreferences"] is None
+    assert db_session.get(Project, pid).review_preferences is None
+
+
+def test_patch_task_type_must_match_the_current_option(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_patch@example.com")
+    pid = _create(client, headers)  # a ci_review project
+    assert client.patch(f"/projects/{pid}", json={"taskType": "ci_review"}, headers=headers).status_code == 200
+    resp = client.patch(f"/projects/{pid}", json={"taskType": "security_analysis"}, headers=headers)
+    assert resp.status_code == 422
+    assert db_session.get(Project, pid).task_type == "ci_review"
+
+
+def test_list_and_get_expose_task_type(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "task_list@example.com")
+    pid = _create(client, headers)
+    assert client.get("/projects", headers=headers).json()[0]["taskType"] == "ci_review"
+    assert client.get(f"/projects/{pid}", headers=headers).json()["taskType"] == "ci_review"

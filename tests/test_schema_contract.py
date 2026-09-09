@@ -40,6 +40,17 @@ CONTRACT = {
         "harnessVendor", "taskType", "contextWindow", "source", "measuredAt",
         "benchmarkAsOf", "benchmarkNotes",
     },
+    # E20 (HLD §3b.1): what the agent fetches — pinned so the consumer never drifts.
+    "AgentConfigOut": {"projectId", "task", "taskType", "model", "reviewPreferences"},
+    "AgentConfigModel": {"name", "provider", "providerModelId", "authMode", "credentialEnvVar"},
+    "ProjectCreate": {
+        "name", "selectedOptionId", "baselineModelId", "taskType", "reviewPreferences",
+    },
+    "ProjectOut": {
+        "id", "name", "userId", "selectedOptionId", "selectedOptionModel",
+        "baselineModelId", "baselineModel", "baselineVendor", "taskType",
+        "reviewPreferences", "setupComplete",
+    },
     "CatalogRowOut": {
         "id", "model", "vendor", "benchmark", "metric", "score", "costPerMtok",
         "inputPricePerMtok", "outputPricePerMtok",
