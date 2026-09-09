@@ -179,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(EXIT_CONFIG, "llm_provider_error", f"{type(exc).__name__}: {exc}")
 
     result_json = json.loads(result.model_dump_json(by_alias=True))
+    result_json["cacheReadTokens"] = diag.cache_read_tokens if diag is not None else None
     print(json.dumps(result_json))
     if diag is not None:
         print_diagnostics(diag)

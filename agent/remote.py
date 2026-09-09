@@ -118,10 +118,11 @@ def post_ci_run(
 
 
 def build_ci_run_payload(result_json: dict, build_id: str) -> dict:
-    """What we POST. Exactly the v1 contract (`CiRunIngest`, extra=forbid) + the build
-    id. tokensIn/tokensOut are OpenCode's `input` + `output` sums — never `total`
-    (it includes cache reads). `cacheReadTokens` joins here as Optional once P38e
-    adds it to `CiRunIngest`; until then it stays on stderr only.
+    """What we POST: the backend's `CiRunIngest` contract (extra=forbid).
+
+    tokensIn/tokensOut are OpenCode's `input` + `output` sums — never `total`
+    (it includes cache reads). cacheReadTokens is stored separately, never priced;
+    review runs have no captured cache count and send null.
     """
     return {
         "findings": [
@@ -131,14 +132,13 @@ def build_ci_run_payload(result_json: dict, build_id: str) -> dict:
                 "file": f["file"],
                 "line": f.get("line"),
                 "message": f["message"],
-                # Ignored by today's API (Finding is extra=ignore); persisted once
-                # P38e adds ci_finding.cwe. Harmless either way.
                 "cwe": f.get("cwe"),
             }
             for f in result_json["findings"]
         ],
         "tokensIn": result_json["tokensIn"],
         "tokensOut": result_json["tokensOut"],
+        "cacheReadTokens": result_json.get("cacheReadTokens"),
         "model": result_json["model"],
         "gate": result_json["gate"],
         "gateReason": result_json.get("gateReason"),

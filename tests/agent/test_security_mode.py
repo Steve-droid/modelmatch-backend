@@ -106,7 +106,8 @@ def test_tokens_are_input_plus_output_never_total(run_agent, workspace, fake_ope
     assert body["tokensOut"] == 4 * 100
     # `total` (input+output+cache) would be 4 * 6100 = 24400 — it never appears.
     assert "24400" not in run.stdout
-    assert "cacheReadTokens" not in body and "tokensTotal" not in body and "total" not in body
+    assert body["cacheReadTokens"] == 20000
+    assert "tokensTotal" not in body and "total" not in body
     # The cache reads are still visible — on stderr, for the humans.
     assert run.summary["cache_read_tokens"] == 4 * 5000
     assert run.summary["total_reported_tokens"] == 4 * 6100

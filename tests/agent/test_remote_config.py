@@ -3,14 +3,15 @@
 A tiny in-process HTTP server plays `GET /projects/{id}/agent-config` and
 `POST /projects/{id}/ci-runs` with the same auth semantics as the backend
 (`X-CI-Token`; 401 on a bad token; 404 unknown project). It records what the
-agent sends so the tests can pin the exact payload — above all that tokens.total
-and cache reads never reach `/ci-runs`.
+agent sends so the tests can pin the exact payload — cache reads travel separately
+from tokensIn/tokensOut; tokens.total and provider-reported cost never reach `/ci-runs`.
 """
 
 from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -18,7 +19,8 @@ import pytest
 from agent.errors import AgentConfigError
 from agent.providers import opencode_model, review_llm_client
 from agent.remote import RemoteError, build_ci_run_payload, fetch_agent_config
-from tests.agent.conftest import invocations, recorded_argv
+from app.schemas.ci import CiRunIngest
+from tests.agent.conftest import clean_env, invocations, recorded_argv
 
 TOKEN = "mm_ci_testtoken_0123456789abcdef"
 PROJECT = 7
@@ -185,25 +187,76 @@ def test_review_llm_client_map():
 # ---------------------------------------------------------------- end to end (CLI)
 
 
-def test_security_project_config_drives_the_run_and_the_post(api, run_agent, workspace, fake_opencode):
+@pytest.mark.parametrize("cache_per_step,sequence,attempts", [
+    (7000, "success", 1),
+    (0, "success", 1),
+    (7000, "refusal,malformed,success", 3),
+])
+def test_security_project_config_drives_the_run_and_the_post(
+    api, run_agent, workspace, fake_opencode, cache_per_step, sequence, attempts,
+):
     stub = api(SECURITY_CFG)
     env = _remote_env(stub, AGENT_WORKSPACE=str(workspace), DEEPSEEK_API_KEY="sk-test",
                       MODELMATCH_POST_RESULT="true", BUILD_TAG="jenkins-sec-vuln-demo-12",
-                      FAKE_STEPS=3, FAKE_STEP_TOKENS=1000, FAKE_CACHE_READ=7000, **fake_opencode)
+                      FAKE_STEPS=3, FAKE_STEP_TOKENS=1000, FAKE_CACHE_READ=cache_per_step,
+                      FAKE_MODE="sequence", FAKE_SEQUENCE=sequence, **fake_opencode)
     run = run_agent(env)
     assert run.returncode == 1, run.stderr           # critical → gate fail, and it was posted
     assert stub.gets == 1
-    [argv] = recorded_argv(fake_opencode)
-    assert argv[4] == "deepseek/deepseek-v4-flash"     # composed from the BARE id
+    assert invocations(fake_opencode) == attempts
+    assert all(argv[4] == "deepseek/deepseek-v4-flash" for argv in recorded_argv(fake_opencode))
     [payload] = stub.posts
-    assert set(payload) == {"findings", "tokensIn", "tokensOut", "model", "gate", "gateReason", "jenkinsBuildId"}
+    assert set(payload) == {"findings", "tokensIn", "tokensOut", "cacheReadTokens", "model", "gate", "gateReason", "jenkinsBuildId"}
     assert payload["jenkinsBuildId"] == "jenkins-sec-vuln-demo-12"
-    assert payload["tokensIn"] == 3000 and payload["tokensOut"] == 300
-    assert "cacheReadTokens" not in json.dumps(payload) and "24300" not in json.dumps(payload)
+    assert payload["tokensIn"] == 3000 * attempts and payload["tokensOut"] == 300 * attempts
+    assert payload["cacheReadTokens"] == 3 * cache_per_step * attempts
+    assert CiRunIngest.model_validate(payload).cache_read_tokens == payload["cacheReadTokens"]
+    assert run.result["cacheReadTokens"] == payload["cacheReadTokens"]
     assert payload["findings"][0]["cwe"] == "CWE-89: SQL Injection"
     assert set(payload["findings"][0]) == {"severity", "category", "file", "line", "message", "cwe"}
     assert "posted run id=33" in run.stderr
     assert TOKEN not in run.stderr and TOKEN not in run.stdout
+
+
+def test_recorded_deepseek_stream_posts_cache_reads_separately(api, run_agent, workspace, fake_opencode):
+    stub = api(SECURITY_CFG)
+    replay = Path(__file__).parent / "fixtures" / "deepseek-run-events.jsonl"
+    run = run_agent(_remote_env(
+        stub, AGENT_WORKSPACE=str(workspace), DEEPSEEK_API_KEY="sk-test",
+        MODELMATCH_POST_RESULT="true", BUILD_TAG="jenkins-sec-replay-1",
+        FAKE_MODE="replay", FAKE_REPLAY_FILE=str(replay), **fake_opencode,
+    ))
+    assert run.returncode == 1, run.stderr
+    [payload] = stub.posts
+    assert (payload["tokensIn"], payload["tokensOut"], payload["cacheReadTokens"]) == (11501, 2618, 69376)
+    assert CiRunIngest.model_validate(payload).cache_read_tokens == 69376
+
+
+def test_review_posts_null_cache_reads_on_the_fake_client(api, monkeypatch, tmp_path, capsys):
+    import os
+
+    from agent.__main__ import main
+    from app.llm.fake import FakeLLMClient
+
+    stub = api(REVIEW_CFG)
+    for key in set(os.environ) - set(clean_env()):
+        monkeypatch.delenv(key)
+    for key, value in _remote_env(
+        stub, ANTHROPIC_API_KEY="sk-test", MODELMATCH_POST_RESULT="true",
+        BUILD_TAG="jenkins-review-demo-1",
+    ).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("app.llm.factory.build_llm_client", lambda *a, **kw: FakeLLMClient())
+    diff = tmp_path / "pr.diff"
+    diff.write_text("--- a/example.py\n+++ b/example.py\n@@\n-pass\n+pass\n")
+    assert main(["--diff", str(diff)]) == 0
+    [payload] = stub.posts
+    assert payload["cacheReadTokens"] is None
+    assert CiRunIngest.model_validate(payload).cache_read_tokens is None
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["cacheReadTokens"] is None
+    assert "posted run id=33" in captured.err
+    assert TOKEN not in captured.err and TOKEN not in captured.out
 
 
 def test_api_task_wins_over_env_task(api, run_agent, workspace, fake_opencode):
@@ -281,12 +334,20 @@ def test_partial_remote_config_falls_back_to_env(run_agent, workspace, fake_open
 # ---------------------------------------------------------------- payload (unit)
 
 
-def test_build_ci_run_payload_is_exactly_the_v1_contract_plus_cwe():
+@pytest.mark.parametrize("cache_fields,expected", [
+    ({"cacheReadTokens": 999}, 999),
+    ({"cacheReadTokens": 0}, 0),
+    ({}, None),
+])
+def test_build_ci_run_payload_matches_ingest_contract(cache_fields, expected):
     result = {"findings": [{"severity": "low", "category": "security", "file": "a.py", "line": 1,
                             "message": "m", "cwe": "CWE-1"}],
               "tokensIn": 10, "tokensOut": 2, "model": "deepseek/deepseek-v4-flash",
               "gate": "pass", "gateReason": None,
-              "cacheReadTokens": 999, "tokensTotal": 1011}          # would be dropped if present
+              **cache_fields, "tokensTotal": 1011, "costUsdReported": 0.1}
     p = build_ci_run_payload(result, "jenkins-1")
-    assert set(p) == {"findings", "tokensIn", "tokensOut", "model", "gate", "gateReason", "jenkinsBuildId"}
+    assert set(p) == {"findings", "tokensIn", "tokensOut", "cacheReadTokens", "model", "gate", "gateReason", "jenkinsBuildId"}
     assert p["findings"][0]["cwe"] == "CWE-1"
+    assert p["cacheReadTokens"] == expected
+    assert (p["tokensIn"], p["tokensOut"]) == (10, 2)
+    assert CiRunIngest.model_validate(p).cache_read_tokens == expected
