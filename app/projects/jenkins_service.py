@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.deps import require_owner
+from app.auth.deps import require_owner, require_real_project
 from app.models import JenkinsConnection, Project, User
 from app.schemas.jenkins import JenkinsConnectionOut, JenkinsConnectionUpdate
 
@@ -29,7 +29,7 @@ def _require_owned_project(db: Session, project_id: int, current_user: User) -> 
 def connect_jenkins(
     db: Session, project_id: int, payload: JenkinsConnectionUpdate, current_user: User
 ) -> JenkinsConnectionOut:
-    _require_owned_project(db, project_id, current_user)
+    require_real_project(_require_owned_project(db, project_id, current_user))
 
     conn = db.scalar(
         select(JenkinsConnection).where(JenkinsConnection.project_id == project_id)

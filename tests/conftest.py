@@ -23,6 +23,9 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret-not-for-production-012
 # Most contract tests create users rapidly. Dedicated admission tests turn the
 # production-default limiter back on and verify its real concurrent DB behavior.
 os.environ.setdefault("AUTH_RATE_LIMIT_ENABLED", "false")
+# Dedicated onboarding tests enable this with the real catalog; other API contracts
+# intentionally start with an empty account and seed their own scenario data.
+os.environ.setdefault("SEED_NEW_USER_EXAMPLES", "false")
 
 from app.config import get_settings
 

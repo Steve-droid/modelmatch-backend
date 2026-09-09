@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent_runtime import require_enabled_runtime_config, runtime_config_error
-from app.auth.deps import require_owner
+from app.auth.deps import require_owner, require_real_project
 from app.ci.tokens import hash_token, mint_token
 from app.config import get_settings
 from app.models import (
@@ -267,7 +267,7 @@ stage('Modicum Security Analysis') {{
 
 def _require_connected(db: Session, project_id: int, current_user: User) -> JenkinsConnection:
     """Owner-scoped + must already have a Jenkins connection (the token lives on it)."""
-    _require_owned_project(db, project_id, current_user)
+    require_real_project(_require_owned_project(db, project_id, current_user))
     conn = db.scalar(
         select(JenkinsConnection).where(JenkinsConnection.project_id == project_id)
     )

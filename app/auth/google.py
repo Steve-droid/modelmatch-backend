@@ -96,6 +96,7 @@ def authenticate_google(db: Session, credential: str, challenge: str) -> User:
     # Stable Google sub is the identity, not a mutable email address. Do not update
     # emails on returning sign-in or silently attach to a legacy password account.
     user = db.scalar(select(User).where(User.google_subject == claims["sub"]))
+    created_user_id = None
     if user is None:
         lock_registration(db)
         # Another login may have created this subject while this transaction waited.
@@ -104,10 +105,13 @@ def authenticate_google(db: Session, credential: str, challenge: str) -> User:
         existing = db.scalar(select(User).where(func.lower(User.email) == claims["email"].lower()))
         if existing is None:
             require_capacity(db)
-            db.execute(insert(User).values(
+            created_user_id = db.scalar(insert(User).values(
                 email=claims["email"].lower(), google_subject=claims["sub"], password_hash=None,
-            ).on_conflict_do_nothing())
+            ).on_conflict_do_nothing().returning(User.id))
         user = db.scalar(select(User).where(User.google_subject == claims["sub"]))
+    if created_user_id is not None and get_settings().seed_new_user_examples:
+        from app.demo.onboarding import provision_examples
+        provision_examples(db, user)
     db.commit()  # consume even a collision challenge; do not let it be replayed
     if user is None:
         raise HTTPException(409, "An account already uses this email. Sign in with your existing method.")

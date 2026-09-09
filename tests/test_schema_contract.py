@@ -49,7 +49,7 @@ CONTRACT = {
     "ProjectOut": {
         "id", "name", "userId", "selectedOptionId", "selectedOptionModel",
         "baselineModelId", "baselineModel", "baselineVendor", "taskType",
-        "reviewPreferences", "setupComplete",
+        "reviewPreferences", "setupComplete", "isExample",
     },
     "CatalogRowOut": {
         "id", "model", "vendor", "benchmark", "metric", "score", "costPerMtok",

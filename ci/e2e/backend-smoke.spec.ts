@@ -40,12 +40,23 @@ test("backend image: healthy + auth works, and the SPA logs in against it", asyn
   expect([201, 409]).toContain(reg.status()); // 409 if a rerun reused the email
   const login = await request.post(`${API}/auth/login`, { data: CREDS });
   expect(login.ok(), `API login -> ${login.status()}`).toBeTruthy();
+  const auth = { Authorization: `Bearer ${(await login.json()).accessToken}` };
+  const projects = await (await request.get(`${API}/projects`, { headers: auth })).json();
+  expect(projects.map((p: { name: string }) => p.name).sort()).toEqual([
+    "Example: Pull Request Review", "Example: Security Scan",
+  ]);
+  for (const project of projects) {
+    expect(project.isExample).toBe(true);
+    expect(project.setupComplete).toBe(false);
+    const savings = await (await request.get(`${API}/projects/${project.id}/savings`, { headers: auth })).json();
+    expect(savings.kpis.runsCount).toBe(project.taskType === "ci_review" ? 30 : 20);
+  }
 
   // --- 3. the FE image serves the SPA and the SPA logs in against the backend ---
   await page.goto("/");
   await page.getByLabel("Email").fill(CREDS.email);
-  await page.getByLabel("Password").fill(CREDS.password);
+  await page.getByLabel("Password", { exact: true }).fill(CREDS.password);
   await page.getByRole("button", { name: "Sign in" }).click();
   // authenticated home (the SPA reached the backend, got a token, rendered the hub)
-  await expect(page.getByRole("button", { name: "Create a new CI-Agent" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Set up a CI agent" }).first()).toBeVisible();
 });

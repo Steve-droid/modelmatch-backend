@@ -24,6 +24,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Index,
     Numeric,
     PrimaryKeyConstraint,
     String,
@@ -259,10 +260,13 @@ class RecommendationEvidence(Base):
 
 class Project(Base):
     __tablename__ = "project"
+    __table_args__ = (Index("uq_project_user_example_task", "user_id", "task_type",
+                           unique=True, postgresql_where=text("is_example")),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
     name: Mapped[str] = mapped_column(String(200))
+    is_example: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     selected_option_id: Mapped[Optional[int]] = mapped_column(ForeignKey("recommendation_option.id"))
     baseline_model_id: Mapped[Optional[int]] = mapped_column(ForeignKey("model.id"))
     # E20 (P38e): the ONE task this project's agent runs — the catalog vocabulary

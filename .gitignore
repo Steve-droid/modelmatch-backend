@@ -34,3 +34,6 @@ data/*
 .DS_Store
 .idea/
 .vscode/
+
+# Browser smoke-test artifacts
+test-results/

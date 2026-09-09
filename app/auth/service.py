@@ -13,13 +13,14 @@ from sqlalchemy.orm import Session
 from app.auth.security import hash_password, verify_password
 from app.auth.admission import lock_registration, require_capacity
 from app.models import User
+from app.config import get_settings
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
     return db.scalar(select(User).where(User.email == email))
 
 
-def register_user(db: Session, email: str, password: str) -> User:
+def register_user(db: Session, email: str, password: str, *, with_examples: bool = True) -> User:
     # Hash before acquiring the short registration lock; ingress + auth bucket bound work.
     password_hash = hash_password(password)
     try:
@@ -29,6 +30,10 @@ def register_user(db: Session, email: str, password: str) -> User:
         require_capacity(db)
         user = User(email=email, password_hash=password_hash)
         db.add(user)
+        db.flush()
+        if with_examples and get_settings().seed_new_user_examples:
+            from app.demo.onboarding import provision_examples
+            provision_examples(db, user)
         db.commit()
         db.refresh(user)
         return user
