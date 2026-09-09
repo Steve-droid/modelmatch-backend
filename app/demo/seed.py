@@ -430,7 +430,8 @@ def _print_summary(summary: dict[str, object]) -> None:
     else:
         print(
             f"Seeded {summary['runs']} runs for {summary['project']!r} "
-            f"(user {summary['user']}): {summary['banked']} banked · "
+            f"(user {summary['user']}): {summary['banked']} "
+            f"{'run' if summary['banked'] == 1 else 'runs'} counted toward savings · "
             f"{summary['quality_risk']} quality-risk · {summary['unrated']} unrated · "
             f"selected={summary['selected']} baseline={summary['baseline']}"
         )
