@@ -264,7 +264,7 @@ After P31 the CI test ladder is **unit → container integration → E2E**:
   exercises `/readyz`, the auth round-trip, the seeded recommender, and one `/projects` write +
   read — **only** over the wire, never an in-process import.
 - **E2E** — Playwright over the full FE+BE+Postgres throwaway compose stack; fake-LLM by default,
-  one gated `e2e-live` real-Bedrock smoke on `main` / `#e2e-live` only.
+  one real-Bedrock smoke only on `main` with explicit `RUN_LIVE_LLM=true`.
 
 ## CI/CD Pipelines
 
@@ -275,7 +275,8 @@ tag and the gitops bump). Toolchains (uv, Playwright, Trivy, yq) run as pinned t
 ### API pipeline — [`Jenkinsfile`](Jenkinsfile) (P18)
 
 Two-job CI as ordered stage groups in one file. Every branch runs the fast + full lanes; only `main` runs
-the release tail; only `main` / a `#e2e-live` commit runs the single real-Bedrock path.
+the release tail. The real-Bedrock path requires `main` and explicit `RUN_LIVE_LLM=true`
+(default false); ordinary merges and offline releases make no live-model call.
 
 ```mermaid
 graph LR
@@ -329,3 +330,45 @@ quality gate + dashboard. Full log: `git tag`.
 
 Steve Levit — stevelevit230@gmail.com
 </content>
+
+### Google login (P38n)
+
+Set `GOOGLE_CLIENT_ID` to a **Web application** OAuth client ID from Google Auth
+Platform. It is a public identifier, not a client secret. Blank disables the feature;
+`GET /auth/google/config` lets the frontend hide the button. The frontend needs no
+build-time Google configuration. Register each exact frontend origin (scheme, host,
+port) in **Authorized JavaScript origins**, and in backend `CORS_ALLOW_ORIGINS`.
+For development use `http://localhost:5173` (or your isolated Vite port).
+Use HTTPS in production. Configure consent branding/audience and test users where
+required. The GIS popup/JS callback needs no app redirect endpoint or client secret.
+
+Flow: JSON `POST /auth/google/challenge` → signed five-minute challenge + nonce →
+Google's official button returns an ID token containing that nonce → JSON
+`POST /auth/google` with `{credential, challenge}` → normal Modicum session JWT.
+Both POSTs require an exact allowed browser Origin. Challenge/token responses are
+`no-store`; credentials stay out of URLs and logs. Public Google signing keys are
+cached for five minutes with a five-second network timeout. Google outages return
+an opaque 503; invalid credentials return 401. No Drive/Gmail scopes are requested.
+
+Google `sub` identifies the account. A verified email is required but does **not**
+authorize linking to an existing password account (409: use the existing method).
+Google-only accounts have no password; password login rejects them. Returning login
+never changes the existing app email/user ID. Account linking and adding passwords
+are deliberately outside this slice.
+
+Apply Alembic `e2f3a4b5c6d7` through the separate migration Job **before enabling**
+Google login. Deploy backend before frontend; configure the public client ID via
+`backend.config.GOOGLE_CLIENT_ID` in GitOps. Used nonces persist across replicas and
+expire after five minutes; subsequent valid login attempts delete expired rows.
+Downgrade preserves users/projects and replaces null passwords with an unusable hash;
+Google-only users cannot sign in on the old app. Re-enabling after a schema downgrade
+requires restoring Google subject associations from backup (the downgrade removes them).
+
+Offline checks: `uv run pytest tests/test_google_auth.py tests/test_auth.py
+ tests/test_orm_models.py tests/test_migration_roundtrip.py` with an isolated Postgres
+`DATABASE_URL`. Tests generate RSA keys locally and never contact Google. Release
+still needs a real Google sign-in, sign-out/relogin, and existing-password-account
+collision smoke with the configured web client.
+
+References: [Google token verification](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token),
+[GIS JavaScript API](https://developers.google.com/identity/gsi/web/reference/js-reference).

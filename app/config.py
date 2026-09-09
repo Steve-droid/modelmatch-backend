@@ -54,6 +54,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("JWT_EXPIRES_MINUTES", "JWT_EXPIRE_MINUTES"),
     )
 
+    # Optional Google Identity Services login. Public OAuth WEB client ID; no secret.
+    google_client_id: str = ""
+
     # Deterministic recommender (S6). The quality↔cost slider's w_q is preset by
     # budget_sensitivity; w_c = 1 − w_q. low → quality-leaning, high → cost-leaning.
     # All env-tunable, no hardcoding in the formula.

@@ -66,7 +66,16 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    google_subject: Mapped[Optional[str]] = mapped_column(String(255), unique=True)
+
+
+class GoogleLoginNonce(Base):
+    """Consumed sign-in challenges, shared across replicas until their expiry."""
+
+    __tablename__ = "google_login_nonce"
+    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Model(Base):

@@ -26,6 +26,6 @@ def register_user(db: Session, email: str, password: str) -> User:
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
     user = get_user_by_email(db, email)
-    if user is None or not verify_password(user.password_hash, password):
+    if user is None or user.password_hash is None or not verify_password(user.password_hash, password):
         return None
     return user
