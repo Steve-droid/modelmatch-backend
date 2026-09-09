@@ -3,7 +3,7 @@
 The agent ships as a separate image and must not require the backend's JWT/DB
 config. It reads only what a CI run needs: which task, which provider/model (BYOK),
 the per-run ceilings, the gate policy, and — since 1.1.0 — how to reach the
-ModelMatch API for its run-time config (HLD §3b.1).
+Modicum API for its run-time config (HLD §3b.1).
 
 Deliberately NO `.env` file: the review stage runs the image with the user's
 checkout as the working directory, and a user repo's own `.env` must never be able

@@ -14,7 +14,7 @@ Two prompts:
 - `chat-answer@v2` — LLM #2: question + spend summary + retrieved catalog rows → an
   answer grounded ONLY in those, or an honest "I don't have that."
 
-Product framing baked into both: ModelMatch proves a cheaper LLM is good enough to run
+Product framing baked into both: Modicum proves a cheaper LLM is good enough to run
 as a CI **code-review agent** that flags BOTH security risks AND coding-style bad
 practices in PR diffs — it is NOT a "summarize what changed" tool.
 
@@ -105,7 +105,7 @@ SQL_GEN = PromptTemplate(
     name="chat-sql",
     version="v1",
     system=(
-        "You are a careful PostgreSQL analyst for ModelMatch. ModelMatch helps a "
+        "You are a careful PostgreSQL analyst for Modicum. Modicum helps a "
         "developer pick a cost-effective LLM to run as a CI code-review agent — an "
         "agent that reviews pull-request diffs and flags BOTH security risks AND "
         "coding-style bad practices, with the pass/fail gate staying in their CI. "
@@ -117,7 +117,7 @@ SQL_GEN = PromptTemplate(
         f"2. If it asks about the USER'S OWN spend, savings, cost so far, or review "
         f"quality, that is answered from the spend summary (not the catalog) — output "
         f"exactly: {NO_QUERY_TOKEN}\n"
-        f"3. If it is unrelated to ModelMatch, models, spend, or CI review — output "
+        f"3. If it is unrelated to Modicum, models, spend, or CI review — output "
         f"exactly: {REFUSAL_TOKEN}"
     ),
     user_template=(
@@ -150,7 +150,7 @@ ANSWER_GEN = PromptTemplate(
     # presenting the period spend as if it were the savings.
     version="v2",
     system=(
-        "You are the ModelMatch assistant. ModelMatch proves a cheaper LLM is good "
+        "You are the Modicum assistant. Modicum proves a cheaper LLM is good "
         "enough to run as a CI code-review agent (it flags security risks and "
         "coding-style bad practices in PR diffs) and shows the money saved versus a "
         "baseline model. Answer the user's question using ONLY the spend summary and "

@@ -1,8 +1,10 @@
-# modelmatch-backend
+# Modicum — Backend
 
-> FastAPI backend for **ModelMatch** — a deterministic model recommender, a CI savings engine with a
+> Modicum was previously ModelMatch. Repository and infrastructure identifiers retain `modelmatch` for compatibility.
+
+> FastAPI backend for **Modicum** — a deterministic model recommender, a CI savings engine with a
 > quality gate, two in-cluster LLM capabilities (catalog ingestion + grounded chat), **and** the
-> containerised CI code-review agent. Part of the [ModelMatch portfolio build](../CLAUDE.md);
+> containerised CI code-review agent. Part of the [Modicum portfolio build](../CLAUDE.md);
 > full spec in [`../docs/planning/`](../docs/planning/).
 
 ## Table of Contents
@@ -22,7 +24,7 @@
 
 ## Overview
 
-ModelMatch helps a team **prove a cheaper LLM is good enough for their CI — and shows the money saved.**
+Modicum helps a team **prove a cheaper LLM is good enough for their CI — and shows the money saved.**
 This repo is the backend **and** the source of the CI agent image.
 
 Key features:

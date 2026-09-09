@@ -3,7 +3,7 @@
 Drives `opencode run --format json` with RealVuln's auditor prompt (bundled
 verbatim, so our results stay comparable to the published v2.1 scores), streams
 its JSON event log, enforces three independent ceilings, extracts the
-Semgrep-shaped findings, maps them to the ModelMatch finding shape (with a CWE)
+Semgrep-shaped findings, maps them to the Modicum finding shape (with a CWE)
 and applies the gate — any CRITICAL finding fails the stage.
 
 Folded in from the P38b spike (`docs/showcase/p38b-runtime-spike/run_security_scan.py`)
@@ -348,7 +348,7 @@ def extract_results(text: str) -> list[dict] | None:
     return None
 
 
-# RealVuln severity + confidence → ModelMatch severity. ERROR+HIGH is the only
+# RealVuln severity + confidence → Modicum severity. ERROR+HIGH is the only
 # combination that fails the build (the gate is on `critical`).
 def map_severity(sev: str, confidence: str) -> str:
     sev = (sev or "").upper()

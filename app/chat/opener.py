@@ -76,7 +76,7 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate * 100:.0f}%"
     task = savings.task_type
     lines = [
-        "Spend summary (authoritative, computed by ModelMatch, not by you):",
+        "Spend summary (authoritative, computed by Modicum, not by you):",
         f"- Task: {task_line(task)} — "
         f"{_TASK_DESCRIPTION.get(task or '', 'the CI agent task for this project')}",
         f"- Selected model (runs the CI agent for this task): {selected}",
@@ -104,7 +104,7 @@ def build_opener(savings: SavingsResponse) -> str:
     k = savings.kpis
     if k.runs_count == 0:
         return (
-            "Hi! I'm your ModelMatch assistant. Once your Jenkins pipeline runs the "
+            "Hi! I'm your Modicum assistant. Once your Jenkins pipeline runs the "
             "CI code-review agent (it flags security risks and coding-style issues in "
             "your PR diffs), I'll explain your spend here: how much the recommended "
             "model is saving you versus the baseline, and whether review quality is "

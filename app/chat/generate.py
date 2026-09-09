@@ -6,7 +6,7 @@ retrieved rows). Both take an injected `LLMClient`, so the pipeline runs against
 fake client (offline) or — per Steve's S14b directive — the real Bedrock Nova client.
 
 The LLMClient seam here is `complete(system, user, max_tokens) -> LLMResponse`
-(ModelMatch's signature), not ABC's `complete(prompt, system=...)`.
+(Modicum's signature), not ABC's `complete(prompt, system=...)`.
 """
 
 from __future__ import annotations
