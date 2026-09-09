@@ -76,6 +76,11 @@ def require_chat_user(current_user: User = Depends(require_operator)) -> User:
     return current_user
 
 
+def require_real_project(project: Project) -> None:
+    if project.is_example:
+        raise HTTPException(409, "This example uses sample data. Create your own CI agent to connect a repository.")
+
+
 def require_project_token(
     project_id: int,
     x_ci_token: str | None = Header(default=None, alias="X-CI-Token"),

@@ -78,3 +78,4 @@ class ProjectOut(CamelModel):
     # (the user finished the wizard through /ci-setup). The FE badges the rest as
     # "setup incomplete" with an edit/retry path (S15d defer-create partial-failure).
     setup_complete: bool
+    is_example: bool = False

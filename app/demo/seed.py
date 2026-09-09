@@ -159,7 +159,8 @@ def _ensure_user(db: Session, email: str, password: str) -> User:
     user = get_user_by_email(db, email)
     if user is not None:
         return user
-    return register_user(db, email, password)
+    # This operator CLI provisions its own named demo projects, not signup examples.
+    return register_user(db, email, password, with_examples=False)
 
 
 def _ensure_jenkins_setup(db: Session, project: Project, user: User) -> None:
@@ -246,6 +247,7 @@ def seed_runs(
     tokens: tuple[int, int, int, int] = _REVIEW_TOKENS,
     findings: list[tuple[str, str, str, int, str, str | None]] | None = None,
     task: str = CI_REVIEW,
+    commit: bool = True,
 ) -> dict[str, object]:
     """Reset + re-insert this project's CI runs (+ findings + the owner's verdicts).
     Idempotent: drops the project's existing runs first (FK cascade clears findings +
@@ -312,7 +314,10 @@ def seed_runs(
                     user_id=project.user_id,
                 ))
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {
         "runs": count,
         "banked": banked,

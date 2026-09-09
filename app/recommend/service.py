@@ -72,7 +72,7 @@ def _to_option_out(
 
 
 def recommend(
-    db: Session, req: RecommendationRequest, current_user: User
+    db: Session, req: RecommendationRequest, current_user: User, *, commit: bool = True
 ) -> RecommendationResult:
     # ① filter the catalog by the selected task type(s). Only rows with both a score
     # and a cost are rankable.
@@ -195,7 +195,10 @@ def recommend(
         benchmark_result_id=baseline_item.key,
         selection=baseline_selection,
     )
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     options_out = [
         _to_option_out(item, option_id_by_key[item.key], *meta_by_key[item.key])

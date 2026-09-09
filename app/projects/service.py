@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent_runtime import require_enabled_runtime_config
-from app.auth.deps import require_owner
+from app.auth.deps import require_owner, require_real_project
 from app.models import JenkinsConnection, Model, Project, RecommendationOption, User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.tasks import CI_REVIEW, is_project_task
@@ -69,11 +69,12 @@ def _to_out(db: Session, project: Project) -> ProjectOut:
         task_type=project.task_type,
         review_preferences=project.review_preferences,
         setup_complete=setup_complete,
+        is_example=project.is_example,
     )
 
 
 def create_project(
-    db: Session, payload: ProjectCreate, current_user: User
+    db: Session, payload: ProjectCreate, current_user: User, *, commit: bool = True
 ) -> ProjectOut:
     # The selected option must exist and belong to the caller's own profile.
     option = db.get(RecommendationOption, payload.selected_option_id)
@@ -95,7 +96,10 @@ def create_project(
         review_preferences=payload.review_preferences,
     )
     db.add(project)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(project)
     return _to_out(db, project)
 
@@ -127,6 +131,7 @@ def update_project(
     require_owner(project.user_id, current_user)  # 403 if not the caller's
 
     data = payload.model_dump(exclude_unset=True)
+    require_real_project(project)
 
     if "selected_option_id" in data:
         option = db.get(RecommendationOption, data["selected_option_id"])

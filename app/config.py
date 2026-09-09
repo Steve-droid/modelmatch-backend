@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     # Public-demo admission and operator features. Zero closes new registration.
     max_registered_users: int = Field(default=700, ge=0)
+    seed_new_user_examples: bool = True
     chat_enabled: bool = True
     auth_rate_limit_enabled: bool = True
     auth_requests_per_minute: int = Field(default=120, ge=1)
