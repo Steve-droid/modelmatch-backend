@@ -41,8 +41,17 @@ from app.llm import FakeLLMClient, LLMResponse
 from app.llm_budget import _current_hour
 from app.models import ChatMessage, LlmCall, LlmUsage, RetrievalTrace, User
 from app.schemas.savings import SavingsKpis, SavingsResponse
-from tests.test_ci import _make_project, _mint_token, _register
+from tests.test_ci import _make_project, _mint_token, _register as _register_user
 from tests.test_quality import _run_with_findings
+
+def _register(client, db_session, email):
+    # Existing chat behavior tests deliberately exercise an operator's owned projects.
+    headers, user_id = _register_user(client, db_session, email)
+    from app.models import User
+    db_session.get(User, user_id).is_operator = True
+    db_session.commit()
+    return headers, user_id
+
 
 LIVE = os.getenv("RUN_LLM_LIVE") == "1"
 live = pytest.mark.skipif(not LIVE, reason="set RUN_LLM_LIVE=1 to hit real Bedrock Nova")

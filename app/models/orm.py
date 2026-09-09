@@ -18,6 +18,8 @@ from typing import Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Float,
     Date,
     DateTime,
     ForeignKey,
@@ -68,6 +70,16 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255))
     google_subject: Mapped[Optional[str]] = mapped_column(String(255), unique=True)
+    is_operator: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class AuthRateBucket(Base):
+    """One fixed-size, shared bucket for all public authentication endpoints."""
+    __tablename__ = "auth_rate_bucket"
+    __table_args__ = (CheckConstraint("id = 1", name="single_auth_bucket"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tokens: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class GoogleLoginNonce(Base):

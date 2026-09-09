@@ -29,7 +29,16 @@ ROW = {
 
 def _auth_header(client) -> dict[str, str]:
     creds = {"email": "cat@example.com", "password": "correct horse battery"}
-    client.post("/auth/register", json=creds)
+    user_id = client.post("/auth/register", json=creds).json()["id"]
+    # Set the role in the fixture DB, never through the public registration payload.
+    from app.auth.deps import get_db
+    from app.main import app
+    from app.models import User
+    session = app.dependency_overrides[get_db]()
+    db = next(session)
+    db.get(User, user_id).is_operator = True
+    db.commit()
+    session.close()
     token = client.post("/auth/login", json=creds).json()["accessToken"]
     return {"Authorization": f"Bearer {token}"}
 

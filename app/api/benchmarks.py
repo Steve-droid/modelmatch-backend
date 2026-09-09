@@ -1,7 +1,8 @@
 """Catalog routes: list and add benchmark rows, plus LLM ingestion (#3).
 
-The catalog is GLOBAL reference data (not owner-scoped) but auth-gated, consistent
-with the rest of the API. POST upserts on the row's natural key (idempotent).
+The catalog is GLOBAL reference data (not owner-scoped). Reads require login;
+writes and paid ingestion require the operator permission. POST upserts on the
+row's natural key (idempotent).
 `POST /benchmarks/ingest` (S5b) runs the in-cluster LLM over an unstructured source
 to fill the catalog — idempotent by content hash, hourly-token-capped (429), and
 validated as untrusted before any row is persisted.
@@ -10,7 +11,7 @@ validated as untrusted before any row is persisted.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, get_db
+from app.auth.deps import get_current_user, get_db, require_operator
 from app.catalog import service
 from app.catalog.service import TaskBenchmarkConflict
 from app.ingest.service import build_ingest_client, ingest_source
@@ -31,7 +32,8 @@ def list_benchmarks(
     return service.list_catalog(db)
 
 
-@router.post("", response_model=CatalogRowOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CatalogRowOut, status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_operator)])
 def add_benchmark(
     payload: CatalogRowIn,
     db: Session = Depends(get_db),
@@ -47,7 +49,8 @@ def add_benchmark(
         ) from exc
 
 
-@router.post("/ingest", response_model=IngestResult, status_code=status.HTTP_200_OK)
+@router.post("/ingest", response_model=IngestResult, status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_operator)])
 def ingest_benchmarks(
     payload: IngestRequest,
     db: Session = Depends(get_db),

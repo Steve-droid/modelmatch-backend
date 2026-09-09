@@ -4,7 +4,8 @@
   "explain my spend" opener on first visit). No LLM.
 - POST /projects/{id}/chat {question} → a grounded answer + retrieval trace + debug.
 
-Both are user-JWT + owner-scoped (a USER asking about their OWN project), NOT the
+Both require operator chat permission AND project ownership, authenticated by a
+user JWT, NOT the
 per-project CI-token path (that's agent ingest only). The LLM client and the read-only
 catalog engine are injected dependencies so tests can substitute a real Bedrock client
 + the test database's read-only role. The hourly token cap maps to 429.
@@ -15,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, get_db, require_owner
+from app.auth.deps import get_db, require_owner, require_chat_user
 from app.chat import pipeline
 from app.chat.execute import get_readonly_engine
 from app.config import get_settings
@@ -31,7 +32,7 @@ from app.schemas.chat import (
     RetrievalTraceOut,
 )
 
-router = APIRouter(prefix="/projects", tags=["chat"])
+router = APIRouter(prefix="/projects", tags=["chat"], dependencies=[Depends(require_chat_user)])
 
 
 def get_chat_llm_client() -> LLMClient:
@@ -56,7 +57,7 @@ def _require_owned_project(db: Session, project_id: int, current_user: User) -> 
 def get_chat_history(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_chat_user),
 ) -> ChatHistoryResponse:
     _require_owned_project(db, project_id, current_user)
     pipeline.ensure_opener(db, project_id, current_user)  # seed opener if empty (no LLM)
@@ -100,7 +101,7 @@ def post_chat(
     project_id: int,
     payload: ChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_chat_user),
     client: LLMClient = Depends(get_chat_llm_client),
     engine: Engine = Depends(get_chat_engine),
 ) -> ChatAnswerResponse:

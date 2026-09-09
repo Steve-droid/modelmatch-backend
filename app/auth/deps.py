@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.auth.security import decode_access_token
 from app.ci.tokens import verify_token
 from app.db import SessionLocal
+from app.config import get_settings
 from app.models import JenkinsConnection, Project, User
 
 _bearer = HTTPBearer(auto_error=False)
@@ -61,6 +62,18 @@ def require_owner(resource_owner_id: int, current_user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized for this resource",
         )
+
+
+def require_operator(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_operator:
+        raise HTTPException(403, "This feature is available only to the operator")
+    return current_user
+
+
+def require_chat_user(current_user: User = Depends(require_operator)) -> User:
+    if not get_settings().chat_enabled:
+        raise HTTPException(403, "Chat is currently disabled")
+    return current_user
 
 
 def require_project_token(

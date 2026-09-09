@@ -7,17 +7,24 @@ from app.schemas.base import CamelModel
 
 class UserCreate(CamelModel):
     email: EmailStr
-    password: str  # plaintext in transit only; hashed (argon2) before storage in S4
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class UserOut(CamelModel):
     id: int
     email: EmailStr
+    chat_enabled: bool = False
+
+    @classmethod
+    def from_user(cls, user):
+        from app.config import get_settings
+        return cls(id=user.id, email=user.email,
+                   chat_enabled=bool(user.is_operator and get_settings().chat_enabled))
 
 
 class LoginRequest(CamelModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=1024)
 
 
 class TokenOut(CamelModel):

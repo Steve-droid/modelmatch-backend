@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.auth.admission import lock_registration, require_capacity
 from app.models import User
 from app.models.orm import GoogleLoginNonce
 from app.schemas.auth import GoogleChallengeOut
@@ -96,8 +97,13 @@ def authenticate_google(db: Session, credential: str, challenge: str) -> User:
     # emails on returning sign-in or silently attach to a legacy password account.
     user = db.scalar(select(User).where(User.google_subject == claims["sub"]))
     if user is None:
+        lock_registration(db)
+        # Another login may have created this subject while this transaction waited.
+        user = db.scalar(select(User).where(User.google_subject == claims["sub"]))
+    if user is None:
         existing = db.scalar(select(User).where(func.lower(User.email) == claims["email"].lower()))
         if existing is None:
+            require_capacity(db)
             db.execute(insert(User).values(
                 email=claims["email"].lower(), google_subject=claims["sub"], password_hash=None,
             ).on_conflict_do_nothing())

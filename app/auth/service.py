@@ -5,10 +5,13 @@ None on any failure (unknown email or wrong password) — the route maps that to
 single 401 so the response never reveals which emails exist.
 """
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth.security import hash_password, verify_password
+from app.auth.admission import lock_registration, require_capacity
 from app.models import User
 
 
@@ -17,11 +20,27 @@ def get_user_by_email(db: Session, email: str) -> User | None:
 
 
 def register_user(db: Session, email: str, password: str) -> User:
-    user = User(email=email, password_hash=hash_password(password))
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    # Hash before acquiring the short registration lock; ingress + auth bucket bound work.
+    password_hash = hash_password(password)
+    try:
+        lock_registration(db)
+        if db.scalar(select(User.id).where(func.lower(User.email) == email.lower())) is not None:
+            raise HTTPException(409, "Email already registered")
+        require_capacity(db)
+        user = User(email=email, password_hash=password_hash)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Email already registered") from None
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(503, "Registration is temporarily unavailable") from None
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:

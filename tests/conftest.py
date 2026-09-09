@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session, sessionmaker
 # JWT_SECRET is required (no default) — provide an explicit test value before any
 # test imports app.main / builds Settings. setdefault respects a real env if set.
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret-not-for-production-0123456789")
+# Most contract tests create users rapidly. Dedicated admission tests turn the
+# production-default limiter back on and verify its real concurrent DB behavior.
+os.environ.setdefault("AUTH_RATE_LIMIT_ENABLED", "false")
 
 from app.config import get_settings
 
