@@ -127,6 +127,7 @@ def project_savings(
             model=model_names.get(run.id),
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
+            cache_read_tokens=run.cache_read_tokens,
             actual_cost=run.actual_cost,
             baseline_cost=run.baseline_cost,
             savings=run.savings,
