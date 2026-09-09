@@ -8,13 +8,13 @@ tasks, selected per project, each shipped as its own image from the same `agent/
 | Task | Image (Dockerfile) | What runs | Gate | Runtime |
 |---|---|---|---|---|
 | **`review`** | `modelmatch-agent` (`agent/Dockerfile`), **172 MB** | one LLM call over the PR **diff**, security + style findings | any **high/critical** finding fails | our provider-agnostic `LLMClient` (Anthropic · Gemini · Bedrock) |
-| **`security`** | `modelmatch-agent-security` (`agent/Dockerfile.security`), **427 MB** | an **OpenCode agentic loop** over a **read-only checkout**, RealVuln's auditor prompt (bundled verbatim), Semgrep-shaped findings **with a CWE** | any **critical** finding fails | the OpenCode 1.18.20 **binary** (DeepSeek · OpenAI · Anthropic · Gemini · Bedrock) |
+| **`security`** | `modelmatch-agent-security` (`agent/Dockerfile.security`), **328 MB** | an **OpenCode agentic loop** over a **read-only checkout**, RealVuln's auditor prompt (bundled verbatim), Semgrep-shaped findings **with a CWE** | any **critical** finding fails | the OpenCode 1.18.20 **binary** (DeepSeek · OpenAI · Anthropic · Gemini · Bedrock) |
 
 Each image bakes `AGENT_IMAGE_TASK`; running a project of the other task against it is a
 config error (exit `4`) naming the right image — never an `ImportError` (the review image
 carries no OpenCode, the security image carries no provider SDKs).
 
-**Why two images, and how they stay small** (amd64, measured 2026-09-08; the single
+**Why two images, and how they stay small** (amd64, measured 2026-09-09; the single
 combined image was 997 MB, the v1 review image 291 MB):
 
 - the venv holds **only the agent's dependency closure**, resolved against the project's
@@ -27,6 +27,9 @@ combined image was 997 MB, the v1 review image 291 MB):
 - no bytecode (the agent runs once per CI job), no pip/ensurepip (nothing installs at
   run time), no shell entrypoint (the credential remap is Python), `dist-info` kept so
   Trivy can read it. Both images share the same `python:3.12-slim` base layers.
+- `1.1.1` removes Git from the security runtime (427 → 328 MB): the audit reads the
+  checkout's files. Verified offline with the real OpenCode binary reading a file
+  from a read-only checkout and posting a fixture critical finding with cache reads.
 
 > How the agent fits the whole product — the metadata-only Jenkins connection, the two
 > Jenkins credentials it reads, and the savings/quality loop it feeds — is in the
@@ -60,14 +63,17 @@ One JSON object — the `/ci-runs` contract plus `cwe` per finding (`null` for r
 ```json
 {"findings":[{"severity":"critical","category":"security","file":"app/main.py","line":38,
   "message":"…","cwe":"CWE-1336: Server-Side Template Injection"}],
- "tokensIn":11501,"tokensOut":2618,"model":"deepseek/deepseek-v4-flash",
+ "tokensIn":11501,"tokensOut":2618,"cacheReadTokens":69376,"model":"deepseek/deepseek-v4-flash",
  "gate":"fail","gateReason":"1 finding(s) at blocking severity (critical)"}
 ```
 
 `tokensIn` / `tokensOut` are what the user's key paid for: for the security loop, the sum
 of OpenCode's `step_finish` **`input` + `output`** over every attempt — **never `tokens.total`**,
-which includes cache reads and overstated one measured run threefold. Cache reads, steps,
-attempts, refusals, coverage and wall-clock go to **stderr** as one
+which includes cache reads and overstated one measured run threefold. Since `1.1.1`,
+`cacheReadTokens` carries the separate cache-read sum over every security attempt
+(`0` when none were read; `null` for review runs). It is included in stdout and the
+agent's POST; backend `1.0.17` or newer accepts and stores it, **never prices it**.
+Cache reads, steps, attempts, refusals, coverage and wall-clock also go to **stderr** as one
 `{"agent_security_summary": …}` line. Provider-reported cost is never posted: both sides of
 the savings figure are `tokens × catalog price`.
 
@@ -75,7 +81,7 @@ Everything else on stderr is structured too (the per-request LLM log line, `agen
 lines, and on failure the **last line** `{"error": …, "detail": …}`) — never a traceback,
 never the diff, prompt or a key.
 
-## Exit codes — one table for both tasks (the gate, in CI)
+## Exit codes — 1.1.1, one table for both tasks (the gate, in CI)
 
 | code | meaning | pass? |
 |---|---|---|
@@ -154,7 +160,7 @@ Live smoke: `RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_l
 
 ## The security stage (reference for the generated snippet)
 
-Until `/ci-setup` emits it per task (P38e), this is the shape:
+`/ci-setup` emits the stage per task (backend `1.0.17` or newer). This is its shape:
 
 ```groovy
 stage('ModelMatch Security Analysis') {
@@ -171,7 +177,7 @@ stage('ModelMatch Security Analysis') {
           -e MODELMATCH_API_URL=https://api.<ip>.sslip.io -e MODELMATCH_PROJECT_ID=7 \\
           -e MODELMATCH_CI_TOKEN -e MODELMATCH_POST_RESULT=true -e BUILD_TAG \\
           -e DEEPSEEK_API_KEY \\
-          <registry>/modelmatch-agent-security:1.1.0 > result.json
+          <registry>/modelmatch-agent-security:1.1.1 > result.json
         AGENT_RC=$?
         case "$AGENT_RC" in
           0)   echo "ModelMatch: scan completed, no blocking findings." ;;

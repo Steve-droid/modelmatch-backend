@@ -109,6 +109,7 @@ boolean isAgentRelevant(String changed) {
     f == 'app/schemas/findings.py' ||
     f == 'app/schemas/ci.py' ||
     f == 'tests/test_agent_review.py' ||
+    f.startsWith('tests/agent/') ||
     f.startsWith('agent/') ||
     f.startsWith('app/llm/') ||
     f.startsWith('app/observability/') ||

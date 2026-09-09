@@ -20,9 +20,9 @@
 #   * the venv holds only what the loop imports — pydantic(+email) / pydantic-settings /
 #     prometheus-client — resolved against the frozen lock as constraints; no provider
 #     SDKs (OpenCode talks to the providers), none of the backend's packages.
-#   * apt: ripgrep (an OpenCode runtime dependency), git (OpenCode snapshots the workspace
-#     through git; also lets a checkout's history be inspected), ca-certificates. Lists
-#     cleaned; the exploration extras from RealVuln's sandbox (tree, file) are not needed —
+#   * apt: ripgrep (an OpenCode runtime dependency) and ca-certificates. No git: this
+#     task audits the checked-out files in a read-only workspace. Lists cleaned;
+#     the exploration extras from RealVuln's sandbox (tree, file) are not needed —
 #     OpenCode's own glob/grep/read/bash tools are what the model actually calls.
 #   * no bytecode, no pip/ensurepip, no shell entrypoint (credential remap is Python).
 #   * dist-info stays: that is what Trivy reads.
@@ -57,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE} AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ripgrep \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  # nothing installs at run time: the base image's pip/ensurepip + stdlib bytecode leave
  && rm -rf /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/ensurepip \
