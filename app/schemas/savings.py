@@ -75,6 +75,7 @@ class SavingsRunRow(CamelModel):
     model: Optional[str] = None
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
+    cache_read_tokens: Optional[int] = None  # Reported separately; excluded from costs.
     actual_cost: Optional[Decimal] = None
     baseline_cost: Optional[Decimal] = None
     savings: Optional[Decimal] = None

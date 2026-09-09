@@ -11,13 +11,15 @@ Three layers (mirrors S12/S13):
   caller's verdict inline.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 
 from app.catalog.seed import load_seed
-from app.models import LlmCall, LlmUsage
+from app.models import CiRun, LlmCall, LlmUsage
 from app.savings.aggregate import RunRecord, assemble
 from app.schemas.savings import SavingsResponse
 
@@ -142,6 +144,60 @@ def test_assemble_series_and_runs_ordered_oldest_first():
     assert [r.id for r in dto.runs] == [1, 2]           # 5d ago before 1d ago
     assert dto.series[0].date < dto.series[1].date
     assert dto.runs[0].findings_count == 0
+
+
+@pytest.mark.parametrize("cache_read_tokens", [69376, 0, None])
+def test_assemble_cache_usage_preserves_all_other_dashboard_fields(cache_read_tokens):
+    record = _rec(
+        1, savings="0.005", quality_ok=True, actual="0.002", baseline="0.007",
+        verdicts=["accept"], days_ago=15,
+    )
+    before = assemble([record], THRESHOLD, _NOW).model_dump(mode="json", by_alias=True)
+    after = assemble(
+        [replace(record, cache_read_tokens=cache_read_tokens)], THRESHOLD, _NOW,
+    ).model_dump(mode="json", by_alias=True)
+
+    assert after["runs"][0].pop("cacheReadTokens") == cache_read_tokens
+    before["runs"][0].pop("cacheReadTokens", None)
+    # Everything else, including KPIs, projections, series, gate and quality, is identical.
+    assert after == before
+
+
+def test_savings_cache_usage_survives_ingest_and_scoping(client, db_session):
+    load_seed(db_session)
+    headers, _ = _register(client, db_session, "sv_cache@example.com")
+    pid = _make_project(client, headers)
+    token = _mint_token(client, headers, pid)
+    for index, cache in enumerate([69376, 0, None]):
+        payload = _agent_result(f"cache-{index}")
+        payload.update(tokensIn=11501, tokensOut=2618, cacheReadTokens=cache, findings=[])
+        response = client.post(
+            f"/projects/{pid}/ci-runs", json=payload, headers={"X-CI-Token": token},
+        )
+        assert response.status_code == 201
+
+    response = client.get(f"/projects/{pid}/savings", headers=headers)
+    assert response.status_code == 200
+    runs = response.json()["runs"]
+    assert [run["cacheReadTokens"] for run in runs] == [69376, 0, None]
+    assert all((run["tokensIn"], run["tokensOut"]) == (11501, 2618) for run in runs)
+    # Identical fresh input/output usage is costed identically, regardless of cache usage.
+    for field in ("actualCost", "baselineCost", "savings"):
+        assert runs[0][field] is not None
+        assert len({run[field] for run in runs}) == 1
+    assert all(run["findingsCount"] == 0 for run in runs)
+
+    other_pid = _make_project(client, headers)
+    assert client.get(f"/projects/{other_pid}/savings", headers=headers).json()["runs"] == []
+    stranger, _ = _register(client, db_session, "sv_cache_stranger@example.com")
+    assert client.get(f"/projects/{pid}/savings", headers=stranger).status_code == 403
+
+    # A cache-bearing old run must still obey the dashboard's date filter.
+    old_run = db_session.get(CiRun, runs[0]["id"])
+    old_run.created_at = datetime.now(timezone.utc) - timedelta(days=31)
+    db_session.commit()
+    recent = client.get(f"/projects/{pid}/savings?range=7d", headers=headers).json()["runs"]
+    assert [run["cacheReadTokens"] for run in recent] == [0, None]
 
 
 # --- GET /projects/{id}/savings: envelope + auth ---------------------------

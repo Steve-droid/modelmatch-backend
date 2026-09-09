@@ -48,6 +48,7 @@ class RunRecord:
     model: Optional[str] = None
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
+    cache_read_tokens: Optional[int] = None  # Reported separately; excluded from costs.
     actual_cost: Optional[Decimal] = None
     baseline_cost: Optional[Decimal] = None
     savings: Optional[Decimal] = None
@@ -167,6 +168,7 @@ def assemble(
             model=r.model,
             tokens_in=r.tokens_in,
             tokens_out=r.tokens_out,
+            cache_read_tokens=r.cache_read_tokens,
             actual_cost=r.actual_cost,
             baseline_cost=r.baseline_cost,
             savings=r.savings,
