@@ -28,6 +28,7 @@ TEST_DB = "modelmatch_migration_test"
 # llm_usage tally added in S2). The backlog names the starred ones explicitly.
 EXPECTED_TABLES = {
     "user",
+    "google_login_nonce",
     "model",
     "agent_runtime_config",
     "harness",
@@ -260,7 +261,7 @@ def test_two_tasks_migration_backfills_task_and_cwe_and_reverses(migration_db):
             assert conn.execute(text("SELECT task FROM ci_run WHERE jenkins_build_id = 'c'")).scalar() == "ci_review"
             conn.commit()
 
-        command.downgrade(cfg, "-1")
+        command.downgrade(cfg, "c9d0e1f2a3b4")
         inspector = inspect(engine)
         assert "task_type" not in {c["name"] for c in inspector.get_columns("project")}
         assert "review_preferences" not in {c["name"] for c in inspector.get_columns("project")}
@@ -270,5 +271,32 @@ def test_two_tasks_migration_backfills_task_and_cwe_and_reverses(migration_db):
             run_tasks = dict(conn.execute(text("SELECT id, task FROM ci_run ORDER BY id")).all())
             assert run_tasks[1] == "code_review" and run_tasks[2] == "security_analysis"
         command.upgrade(cfg, "head")  # up / down / up
+    finally:
+        engine.dispose()
+
+
+def test_google_migration_preserves_users_and_projects(migration_db):
+    from alembic import command
+    from app.auth.security import verify_password
+
+    cfg, test_url = migration_db
+    command.upgrade(cfg, "d1e2f3a4b5c6")
+    engine = create_engine(test_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO \"user\" (id,email,password_hash) VALUES (900,'legacy@example.com','old-hash')"))
+            conn.execute(text("INSERT INTO project (id,user_id,name) VALUES (900,900,'preserved-project')"))
+        command.upgrade(cfg, "e2f3a4b5c6d7")
+        with engine.begin() as conn:
+            assert conn.execute(text('SELECT password_hash FROM "user" WHERE id=900')).scalar() == "old-hash"
+            conn.execute(text("INSERT INTO \"user\" (id,email,google_subject) VALUES (901,'google@example.com','google-sub')"))
+            conn.execute(text("INSERT INTO project (id,user_id,name) VALUES (901,901,'google-project')"))
+        command.downgrade(cfg, "d1e2f3a4b5c6")
+        with engine.connect() as conn:
+            hashes = dict(conn.execute(text('SELECT id,password_hash FROM "user" ORDER BY id')).all())
+            assert hashes == {900: "old-hash", 901: "$argon2id$disabled"}
+            assert not verify_password(hashes[901], "!")
+            assert conn.execute(text("SELECT count(*) FROM project WHERE id IN (900,901)")).scalar() == 2
+        command.upgrade(cfg, "head")
     finally:
         engine.dispose()

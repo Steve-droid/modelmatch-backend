@@ -6,7 +6,7 @@
 //             E2E (compose, full stack) -> [main only] e2e-live (one real Nova call).
 //   RELEASE — [main] Tag (SemVer) -> Publish (ECR) -> Deploy (gitops image-tag bump).
 // FAST runs on every push; FULL runs on feature/* and main only (other branches stop after FAST);
-// e2e-live + RELEASE run on main only; FAST_ONLY skips FULL on demand.
+// e2e-live requires explicit RUN_LIVE_LLM on main; FAST_ONLY skips FULL on demand.
 // No static AWS keys: EC2 instance role does ECR + Bedrock; deploy keys push tag/bump.
 // Non-secret delivery config lives in ci/pipeline.env. Tools (uv/Playwright/Trivy/yq) run
 // as pinned containers since the box only has Docker.
@@ -95,6 +95,8 @@ pipeline {
     // Manual override to run only the FAST lane (e.g. a quick demo build).
     booleanParam(name: 'FAST_ONLY', defaultValue: false,
                  description: 'Run only the fast lane (static gate + unit). Default: false (run everything).')
+    booleanParam(name: 'RUN_LIVE_LLM', defaultValue: false,
+                 description: 'Opt in to the paid Bedrock E2E check on main. Keep false for offline releases.')
   }
 
   options {
@@ -389,9 +391,9 @@ pipeline {
         }
 
         stage('E2E live (gated real-Bedrock)') {
-          // The single real-model path (main only). Same stack with LLM_CLIENT=bedrock;
+          // Explicit paid-call opt-in on main. Same stack with LLM_CLIENT=bedrock;
           // the subcheck makes one real Nova call via the instance profile. Token-capped.
-          when { branch 'main' }
+          when { allOf { branch 'main'; expression { params.RUN_LIVE_LLM == true } } }
           steps {
             script {
               env.FAILED_STAGE = 'E2E live (gated real-Bedrock)'
