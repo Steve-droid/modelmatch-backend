@@ -75,6 +75,8 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     # acceptance_rate is a 0–1 fraction (see app.quality.service); scale for display.
     rate = "not yet rated" if k.acceptance_rate is None else f"{k.acceptance_rate * 100:.0f}%"
     task = savings.task_type
+    quality_label = {"banking": "quality target met", "quality_risk": "below quality target",
+                     "unrated": "not yet rated"}[k.quality_status]
     lines = [
         "Spend summary (authoritative, computed by Modicum, not by you):",
         f"- Task: {task_line(task)} — "
@@ -82,7 +84,8 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
         f"- Selected model (runs the CI agent for this task): {selected}",
         f"- Baseline model (the expensive default, costed but not run): {baseline}",
         f"- CI runs in range: {k.runs_count} "
-        f"(banked {k.banked_runs}, quality-risk {k.quality_risk_runs}, "
+        f"({k.banked_runs} {'run' if k.banked_runs == 1 else 'runs'} counted toward savings, "
+        f"quality-risk {k.quality_risk_runs}, "
         f"unrated {k.unrated_runs})",
         f"- Cumulative saved vs baseline (quality-passing runs only): "
         f"{_money(k.cumulative_saved)}"
@@ -90,7 +93,7 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
         f"- Spend this period (actual): {_money(k.spend_this_period)}",
         f"- Savings at quality risk (excluded from the headline): {_money(k.quality_risk)}",
         f"- Finding acceptance rate: {rate} "
-        f"(quality threshold {k.threshold * 100:.0f}%, status: {k.quality_status})",
+        f"(quality threshold {k.threshold * 100:.0f}%, status: {quality_label})",
     ]
     if k.projected_monthly_savings is not None:
         lines.append(
@@ -132,7 +135,7 @@ def build_opener(savings: SavingsResponse) -> str:
         )
     else:
         quality_line = (
-            "No findings have been rated yet, so nothing is banked toward the headline "
+            "No findings have been rated yet, so no runs count toward your savings total "
             "until review quality is confirmed."
         )
 
