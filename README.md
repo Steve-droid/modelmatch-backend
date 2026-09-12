@@ -1,6 +1,6 @@
 # Driftplain — Backend
 
-> **P38r (prepared September 12, 2026):** Driftplain / driftplain.dev is the selected rebrand, pending review and release. Modicum at modicum.cloud remains live. Internal modelmatch identifiers are retained.
+> **P38r — shipped September 12, 2026:** Driftplain is live at **https://driftplain.dev**, with **https://api.driftplain.dev** as its runtime API. Trusted HTTPS, Google domain ownership, published Google branding and real sign-in are verified. Modicum/sslip.io endpoints and operational identifiers remain compatible. FE/BE 1.0.24, agents 1.1.3; runtime cutover GitOps v0.18.22.
 
 
 > Driftplain was previously Modicum / ModelMatch. Repository and infrastructure identifiers retain `modelmatch` for compatibility.
