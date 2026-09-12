@@ -2,7 +2,7 @@
 
 PUT upserts the single connection per project (owner-scoped). The connection is
 **metadata only** — base URL + job name. The provider key and the per-project CI
-token live in the user's own Jenkins credentials, never in Modicum, so nothing
+token live in the user's own Jenkins credentials, never in Driftplain, so nothing
 secret is collected or stored here. No live Jenkins call in S9 — status is set to
 'configured'. (The legacy `*_ref` columns stay nullable + unused; no migration.)
 """

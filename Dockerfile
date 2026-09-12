@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # --- builder: resolve deps into a venv with uv ---
-FROM python:3.12-slim AS builder
+FROM ${PYTHON_IMAGE} AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -16,7 +17,10 @@ COPY app ./app
 RUN uv sync --frozen --no-dev --extra bedrock
 
 # --- runtime: slim, non-root, gunicorn+uvicorn (no --reload) ---
-FROM python:3.12-slim AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
+# Apply Debian security fixes newer than the pinned Python base (2026-09-12).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 appuser
 WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app /app

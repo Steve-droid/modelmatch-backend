@@ -1,4 +1,4 @@
-# Modicum CI agent — two tasks, two images, one codebase
+# Driftplain CI agent — two tasks, two images, one codebase
 
 The product's **proof**: a standalone image (built from this repo) that runs in the
 **user's** Jenkins on the **user's** key (BYOK), does real LLM work on their code, and
@@ -163,7 +163,7 @@ Live smoke: `RUN_LLM_LIVE=1 ANTHROPIC_API_KEY=... uv run pytest tests/test_llm_l
 `/ci-setup` emits the stage per task (backend `1.0.17` or newer). This is its shape:
 
 ```groovy
-stage('Modicum Security Analysis') {
+stage('Driftplain Security Analysis') {
   agent any
   environment {
     MODELMATCH_CI_TOKEN = credentials('modelmatch-ci-token')
@@ -180,12 +180,12 @@ stage('Modicum Security Analysis') {
           <registry>/modelmatch-agent-security:1.1.1 > result.json
         AGENT_RC=$?
         case "$AGENT_RC" in
-          0)   echo "Modicum: scan completed, no blocking findings." ;;
-          1)   echo "Modicum: CRITICAL finding - failing the stage." ;;
-          2)   echo "Modicum: unparseable model output - NOT a clean scan." ;;
-          3)   echo "Modicum: the model REFUSED to audit this code. Nothing was scanned. NOT a pass." ;;
-          124) echo "Modicum: a run ceiling aborted the scan - NOT a clean scan." ;;
-          *)   echo "Modicum: agent failed ($AGENT_RC) - treating as failure." ;;
+          0)   echo "Driftplain: scan completed, no blocking findings." ;;
+          1)   echo "Driftplain: CRITICAL finding - failing the stage." ;;
+          2)   echo "Driftplain: unparseable model output - NOT a clean scan." ;;
+          3)   echo "Driftplain: the model REFUSED to audit this code. Nothing was scanned. NOT a pass." ;;
+          124) echo "Driftplain: a run ceiling aborted the scan - NOT a clean scan." ;;
+          *)   echo "Driftplain: agent failed ($AGENT_RC) - treating as failure." ;;
         esac
         exit $AGENT_RC
     '''

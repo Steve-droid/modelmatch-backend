@@ -40,7 +40,7 @@ from app.observability.metrics import record_llm_call
 from app.savings import dashboard
 
 _OFF_TOPIC_MESSAGE = (
-    "I can only answer questions about your Modicum spend, review quality, and the "
+    "I can only answer questions about your Driftplain spend, review quality, and the "
     "model catalog. Try rephrasing your question around those."
 )
 _FAILED_MESSAGE = (

@@ -1,6 +1,6 @@
-# Modicum — Runbook & Demo Walkthrough
+# Driftplain — Runbook & Demo Walkthrough
 
-> A single, reviewer-facing guide to **understand**, **run**, and **demo** Modicum. It spans both
+> A single, reviewer-facing guide to **understand**, **run**, and **demo** Driftplain. It spans both
 > active repos (`modelmatch-backend`, `modelmatch-frontend`). It lives in the backend repo because the
 > umbrella workspace is **not** a git repo and the backend holds the product core + the CI agent.
 >
@@ -14,12 +14,12 @@ yet merged** — do not assume they run.
 
 ---
 
-## 1. What Modicum is
+## 1. What Driftplain is
 
 **One-liner:** *Prove a cheaper LLM is good enough for your CI — and show the money saved.*
 
 **Demo story.** A team runs an AI code-review agent in their Jenkins CI and defaults to an expensive
-model "to be safe." Modicum:
+model "to be safe." Driftplain:
 
 1. **Recommends** a cost-effective model + an expensive **baseline** to compare against — using a
    **deterministic** formula over a benchmark catalog (no LLM in the ranking).
@@ -64,7 +64,7 @@ form inputs (task type, budget sensitivity, latency)
 
 ## 3. The two-surface model rule (important)
 
-Modicum uses an LLM in **three** places, governed by **where the model runs and whose key pays**:
+Driftplain uses an LLM in **three** places, governed by **where the model runs and whose key pays**:
 
 | Surface | Used for | Models | Auth |
 |---|---|---|---|

@@ -37,7 +37,7 @@ _SQL_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "Modicum backend"
+    app_name: str = "Driftplain backend"
     database_url: str = (
         "postgresql+psycopg://modelmatch:modelmatch@localhost:5432/modelmatch"
     )
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     )
     # ≥ 1 so suggested = shortlist[0] can never index an empty list.
     recommendation_shortlist_size: int = Field(default=3, ge=1)
-    # P38c. Modicum recommends a model to RUN in the user's CI, so by default the
+    # P38c. Driftplain recommends a model to RUN in the user's CI, so by default the
     # pick ranks only models the agent can actually reach: one with an enabled
     # agent_runtime_config, meaning a credential the generated pipeline can inject and
     # a runtime that can address the model. Recommending a model the pipeline cannot

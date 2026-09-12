@@ -1,3 +1,3 @@
-"""Modicum backend application package."""
+"""Driftplain backend application package."""
 
 __version__ = "0.0.1"

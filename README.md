@@ -1,10 +1,13 @@
-# Modicum — Backend
+# Driftplain — Backend
 
-> Modicum was previously ModelMatch. Repository and infrastructure identifiers retain `modelmatch` for compatibility.
+> **P38r (prepared September 12, 2026):** Driftplain / driftplain.dev is the selected rebrand, pending review and release. Modicum at modicum.cloud remains live. Internal modelmatch identifiers are retained.
 
-> FastAPI backend for **Modicum** — a deterministic model recommender, a CI savings engine with a
+
+> Driftplain was previously Modicum / ModelMatch. Repository and infrastructure identifiers retain `modelmatch` for compatibility.
+
+> FastAPI backend for **Driftplain** — a deterministic model recommender, a CI savings engine with a
 > quality gate, two in-cluster LLM capabilities (catalog ingestion + grounded chat), **and** the
-> containerised CI code-review agent. Part of the [Modicum portfolio build](../CLAUDE.md);
+> containerised CI code-review agent. Part of the [Driftplain portfolio build](../CLAUDE.md);
 > full spec in [`../docs/planning/`](../docs/planning/).
 
 ## Table of Contents
@@ -24,7 +27,7 @@
 
 ## Overview
 
-Modicum helps a team **prove a cheaper LLM is good enough for their CI — and shows the money saved.**
+Driftplain helps a team **prove a cheaper LLM is good enough for their CI — and shows the money saved.**
 This repo is the backend **and** the source of the CI agent image.
 
 Key features:
@@ -344,7 +347,7 @@ required. The GIS popup/JS callback needs no app redirect endpoint or client sec
 
 Flow: JSON `POST /auth/google/challenge` → signed five-minute challenge + nonce →
 Google's official button returns an ID token containing that nonce → JSON
-`POST /auth/google` with `{credential, challenge}` → normal Modicum session JWT.
+`POST /auth/google` with `{credential, challenge}` → normal Driftplain session JWT.
 Both POSTs require an exact allowed browser Origin. Challenge/token responses are
 `no-store`; credentials stay out of URLs and logs. Public Google signing keys are
 cached for five minutes with a five-second network timeout. Google outages return
