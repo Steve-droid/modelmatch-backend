@@ -1,4 +1,4 @@
-"""Modicum CI agent (the product's proof) — two tasks, one image.
+"""Driftplain CI agent (the product's proof) — two tasks, one image.
 
 A standalone image (built from this repo) that runs in the *user's* Jenkins on the
 user's key (BYOK): `review` (one LLM call over the PR diff, security + style

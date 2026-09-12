@@ -1,4 +1,4 @@
-"""Modicum backend entrypoint.
+"""Driftplain backend entrypoint.
 
 S1 platform shell: env-driven config, CORS, and a liveness/readiness split.
 Feature stories (recommender, ingestion, chat, savings, agent) extend this.

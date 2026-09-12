@@ -1,7 +1,7 @@
 [project]
 name = "modelmatch-backend"
 version = "0.0.1"
-description = "Modicum backend — deterministic recommender, CI savings engine, in-cluster LLM (ingestion + chat), and the CI agent image."
+description = "Driftplain backend — deterministic recommender, CI savings engine, in-cluster LLM (ingestion + chat), and the CI agent image."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -27,7 +27,7 @@
 #   * no bytecode, no pip/ensurepip, no shell entrypoint (credential remap is Python).
 #   * dist-info stays: that is what Trivy reads.
 
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # ---------------------------------------------------------------- builder (venv)
 FROM ${PYTHON_IMAGE} AS builder
@@ -57,7 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE} AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ripgrep \
+# Apply Debian security fixes newer than the pinned Python base (2026-09-12).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends ca-certificates ripgrep \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  # nothing installs at run time: the base image's pip/ensurepip + stdlib bytecode leave
  && rm -rf /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/ensurepip \

@@ -1,4 +1,4 @@
-"""The agent's two calls to the Modicum API (HLD §3b.1), both under the CI token.
+"""The agent's two calls to the Driftplain API (HLD §3b.1), both under the CI token.
 
 - `fetch_agent_config`  GET  /projects/{id}/agent-config  → task, model, preferences
 - `post_ci_run`         POST /projects/{id}/ci-runs       → the run + findings + tokens

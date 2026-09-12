@@ -21,7 +21,7 @@
 #     no shell entrypoint (the credential remap is Python), no compilers, no apt packages.
 #   * dist-info stays: that is what Trivy reads.
 
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # ---------------------------------------------------------------- builder
 FROM ${PYTHON_IMAGE} AS builder
@@ -47,6 +47,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # ---------------------------------------------------------------- runtime
 FROM ${PYTHON_IMAGE} AS runtime
+# Apply Debian security fixes newer than the pinned Python base (2026-09-12).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
 # The venv is complete: nothing installs at run time, so the base image's pip/ensurepip
 # (and its CVE surface) leave; so does the stdlib bytecode (recompiled in memory once).
 RUN rm -rf /usr/local/lib/python3.12/site-packages/pip* /usr/local/lib/python3.12/ensurepip \

@@ -78,7 +78,7 @@ def format_savings_snapshot(savings: SavingsResponse) -> str:
     quality_label = {"banking": "quality target met", "quality_risk": "below quality target",
                      "unrated": "not yet rated"}[k.quality_status]
     lines = [
-        "Spend summary (authoritative, computed by Modicum, not by you):",
+        "Spend summary (authoritative, computed by Driftplain, not by you):",
         f"- Task: {task_line(task)} — "
         f"{_TASK_DESCRIPTION.get(task or '', 'the CI agent task for this project')}",
         f"- Selected model (runs the CI agent for this task): {selected}",
@@ -107,7 +107,7 @@ def build_opener(savings: SavingsResponse) -> str:
     k = savings.kpis
     if k.runs_count == 0:
         return (
-            "Hi! I'm your Modicum assistant. Once your Jenkins pipeline runs the "
+            "Hi! I'm your Driftplain assistant. Once your Jenkins pipeline runs the "
             "CI code-review agent (it flags security risks and coding-style issues in "
             "your PR diffs), I'll explain your spend here: how much the recommended "
             "model is saving you versus the baseline, and whether review quality is "
